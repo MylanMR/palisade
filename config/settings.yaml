@@ -1,0 +1,38 @@
+# Palisade runtime settings.
+# Every value here is hashed into manifest.lock and stamped on each audit record,
+# so a change to this file is visible in the audit trail.
+
+server:
+  host: 127.0.0.1          # never expose beyond the local machine in desktop mode
+  port: 8080
+  require_token: true      # UI receives an HttpOnly cookie; API clients send Authorization: Bearer <token>
+
+runtime:
+  base_port: 8081          # llama-server for the assistant model
+  guardian_port: 8082      # llama-server for the guardian model
+  context_tokens: 4096
+  gpu_layers: auto         # auto | 0 | integer. auto = offload everything if a GPU backend is present
+  threads: auto            # auto = physical cores minus one
+  startup_timeout_seconds: 180
+
+tier: auto                 # auto | small | standard   (see config/models.yaml)
+
+guardian:
+  mode: combined           # combined = one classifier call for all categories (fast)
+                           # per_category = one call per category (slower, gives category attribution)
+  threshold: 0.5           # P(violation) at or above this is a violation
+  check_input: true
+  check_output: true
+
+audit:
+  directory: data/audit
+  retain_content: hashes   # hashes | full
+                           # hashes: store SHA-256 of prompt and response only
+                           # full:   store the text as well (needed for incident review, larger footprint)
+  rotate_mb: 64            # start a new chained file when the current one exceeds this size
+
+generation:
+  system_prompt: |
+    You are a local assistant. Answer directly and precisely. If you are unsure, say so.
+  temperature: 0.4
+  max_tokens: 1024

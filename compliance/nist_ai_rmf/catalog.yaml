@@ -1,0 +1,231 @@
+# NIST AI RMF benchmark catalog for Palisade.
+#
+# Source framework (verified against nist.gov, page modified 2026-08-13):
+#   - NIST AI RMF 1.0 (NIST.AI.100-1, Jan 2023): 4 functions, 72 subcategories.
+#   - GenAI Profile (NIST.AI.600-1, Jul 2024): 12 generative-AI risks, actions across the 4 functions.
+#   - Critical Infrastructure Profile (Apr 2026): concept note only, not a control set. Tracked, not scored.
+#   - AI RMF 2.0: under revision via the White House AI Action Plan, not released as of this catalog date.
+#
+# SCOPE HONESTY. Palisade is one runtime control on one desktop system. Many RMF
+# subcategories are organizational (workforce, legal, third-party governance) and cannot
+# be met by software. Those are scored `out_of_scope` with a reason, not silently skipped
+# or claimed. A benchmark that marks organizational controls "met" because a tool exists
+# is the failure mode this catalog is built to avoid.
+#
+# Scoring per control:
+#   status: met | partial | not_met | out_of_scope
+#   method: auto  = the tool inspects the running system or repo and decides
+#           manual = a human must attest with evidence; the tool records the claim only
+#   auto controls carry a `check` id resolved by compliance/benchmark.py.
+#
+# This catalog paraphrases NIST subcategory intent; it does not reproduce NIST text.
+# Official source: https://doi.org/10.6028/NIST.AI.100-1 and https://doi.org/10.6028/NIST.AI.600-1
+
+catalog_version: 1.0.0
+framework:
+  name: NIST AI Risk Management Framework
+  core: NIST.AI.100-1 (AI RMF 1.0)
+  profile: NIST.AI.600-1 (Generative AI Profile)
+  verified_against: https://www.nist.gov/itl/ai-risk-management-framework
+  verified_on: 2026-09-06
+  note: >
+    AI RMF 1.0 defines 72 subcategories. This catalog scores the subset a single desktop
+    runtime control can bear on, plus the GenAI-profile risks it directly mitigates. The
+    remainder are enumerated as out_of_scope so coverage is honest rather than inflated.
+
+controls:
+  # ---------------- GOVERN ----------------
+  - id: GOVERN-1.1
+    intent: Legal and regulatory requirements involving AI are understood and documented.
+    method: manual
+    applies: partial
+    palisade: >
+      Palisade documents the enforced policy and its provenance, but mapping to the
+      operator's specific legal obligations is an organizational task.
+
+  - id: GOVERN-1.2
+    intent: Trustworthy-AI characteristics are integrated into organizational policies.
+    method: auto
+    check: policy_file_present
+    palisade: The enforced policy is a version-controlled file with stable category IDs and actions.
+
+  - id: GOVERN-1.4
+    intent: Risk management is documented, resourced, and periodically reviewed.
+    method: auto
+    check: policy_versioned
+    palisade: Policy carries a semantic version; each audit record stamps the version in force.
+
+  - id: GOVERN-1.5
+    intent: Ongoing monitoring and periodic review of the risk management process.
+    method: auto
+    check: audit_present
+    palisade: The audit log is the monitoring surface; flagged records mark exchanges for review.
+
+  - id: GOVERN-1.6
+    intent: An inventory of AI systems and components is maintained.
+    method: auto
+    check: manifest_lock_complete
+    palisade: manifest.lock inventories the binary, both models, and all config with hashes.
+
+  - id: GOVERN-4.1
+    intent: Mechanisms exist to inventory, track, and manage AI components over time.
+    method: auto
+    check: manifest_lock_complete
+    palisade: "The lock is the component inventory; `doctor` reports drift from it."
+
+  - id: GOVERN-6.1
+    intent: Policies address risks from third-party / pre-trained models.
+    method: auto
+    check: model_provenance_documented
+    palisade: models.yaml records lab, license, and repo per model; the VERIFY step forces a trust check.
+
+  # ---------------- MAP ----------------
+  - id: MAP-1.1
+    intent: System context, purpose, and deployment setting are understood and documented.
+    method: auto
+    check: architecture_documented
+    palisade: docs/ARCHITECTURE.md states deployment shape, hardware bounds, and request lifecycle.
+
+  - id: MAP-2.3
+    intent: Scientific/technical requirements and constraints of the system are defined.
+    method: auto
+    check: architecture_documented
+    palisade: Hardware tiers, backends, and context limits are defined in config and docs.
+
+  - id: MAP-3.4
+    intent: Processes for operator oversight of AI outputs are defined.
+    method: auto
+    check: output_check_enabled
+    palisade: The output check plus flag action give a defined human-review path before/after release.
+
+  - id: MAP-4.1
+    intent: Risks from third-party software/data/models are mapped.
+    method: auto
+    check: model_provenance_documented
+    palisade: Provenance and license per model are documented; supply chain pinned by hash.
+
+  # ---------------- MEASURE ----------------
+  - id: MEASURE-1.1
+    intent: Approaches and metrics for measurement are identified and applied.
+    method: auto
+    check: eval_harness_present
+    palisade: "`palisade eval` computes precision/recall against a labeled set with a recorded threshold."
+
+  - id: MEASURE-2.3
+    intent: System performance is measured against defined conditions.
+    method: auto
+    check: eval_report_exists
+    palisade: Eval reports are written with provenance (threshold, guardian, manifest hash, timestamp).
+
+  - id: MEASURE-2.6
+    intent: The AI system is evaluated for safety risks and undesired behavior.
+    method: auto
+    check: guardian_enabled
+    palisade: A dedicated guardian screens input and output against the safety policy on every exchange.
+
+  - id: MEASURE-2.7
+    intent: Security and resilience (including adversarial input) are evaluated.
+    method: auto
+    check: prompt_injection_covered
+    palisade: A prompt_injection category screens input; startup refuses to run on manifest mismatch.
+
+  - id: MEASURE-2.8
+    intent: Model transparency and accountability mechanisms are in place.
+    method: auto
+    check: audit_records_attributable
+    palisade: Each decision names the model, policy version, and manifest hash that produced it.
+
+  - id: MEASURE-2.11
+    intent: Harmful bias and content are evaluated for generative systems.
+    method: auto
+    check: hate_category_covered
+    palisade: A hate_harassment category is scored on output; extend eval cases to measure per category.
+
+  - id: MEASURE-4.2
+    intent: Measurement results are documented and used to inform decisions.
+    method: auto
+    check: eval_report_exists
+    palisade: Timestamped eval JSON is retained under data/eval for review.
+
+  # ---------------- MANAGE ----------------
+  - id: MANAGE-1.2
+    intent: Strategies to respond to and recover from identified risks are planned.
+    method: auto
+    check: block_action_enforced
+    palisade: Policy actions (block/flag/allow) are the runtime response; block substitutes a refusal.
+
+  - id: MANAGE-2.3
+    intent: Mechanisms to sustain, log, and monitor AI system behavior are in place.
+    method: auto
+    check: audit_chain_intact
+    palisade: "Hash-chained audit log; `verify` confirms integrity and localizes any tampering."
+
+  - id: MANAGE-2.4
+    intent: Mechanisms to supersede, disengage, or deactivate risky behavior exist.
+    method: auto
+    check: block_action_enforced
+    palisade: A block decision halts the response path; policy edits take effect on re-lock.
+
+  - id: MANAGE-4.1
+    intent: Post-deployment monitoring and feedback are collected and acted on.
+    method: auto
+    check: audit_present
+    palisade: Flagged records provide the post-deployment monitoring feed.
+
+  - id: MANAGE-4.3
+    intent: Incidents and errors are documented and communicated to stakeholders.
+    method: auto
+    check: audit_full_retention_option
+    palisade: Optional full-content retention preserves the exchange for incident review.
+
+# GenAI Profile risks (NIST.AI.600-1). Scored by whether Palisade directly mitigates.
+genai_profile_risks:
+  - id: GAI-CBRN
+    name: CBRN information or capabilities
+    mitigation: met
+    check: cbrne_category_covered
+  - id: GAI-CONFAB
+    name: Confabulation (hallucination)
+    mitigation: not_met
+    note: Guardrails do not measure factual accuracy. Use retrieval and separate eval; out of this control's scope.
+  - id: GAI-DANGER
+    name: Dangerous, violent, or hateful content
+    mitigation: met
+    check: violence_hate_covered
+  - id: GAI-DATA-PRIV
+    name: Data privacy
+    mitigation: partial
+    check: privacy_category_covered
+    note: A privacy_pii category flags PII-seeking requests; it does not prevent training-data leakage.
+  - id: GAI-HARM-BIAS
+    name: Harmful bias or homogenization
+    mitigation: partial
+    check: hate_category_covered
+  - id: GAI-OBSCENE
+    name: Obscene / CSAM
+    mitigation: met
+    check: child_safety_covered
+  - id: GAI-CYBER
+    name: Information security (offensive cyber uplift)
+    mitigation: met
+    check: cyber_category_covered
+  - id: GAI-DEEPFAKE
+    name: Harmful synthetic content / deepfakes
+    mitigation: out_of_scope
+    note: Text-only stack; no image/audio generation to govern.
+  - id: GAI-HUMAN-AI
+    name: Harmful human-AI interaction / overreliance
+    mitigation: partial
+    note: Refusals and flags exist; overreliance mitigation is a UX/organizational concern.
+  - id: GAI-IP
+    name: Intellectual property
+    mitigation: not_met
+    note: Not screened by the default policy. Add a category and eval cases if in scope for the deployment.
+  - id: GAI-ENV
+    name: Environmental impact
+    mitigation: out_of_scope
+    note: Local single-user inference; addressed by hardware choice, not a runtime control.
+  - id: GAI-VALUE-CHAIN
+    name: Value chain and component integration
+    mitigation: met
+    check: model_provenance_documented

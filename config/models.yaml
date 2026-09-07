@@ -1,0 +1,98 @@
+# Palisade model and binary manifest.
+#
+# Provenance rule for this manifest: every model is from a US-headquartered lab and
+# ships under a license that permits local use and fine-tuning. Chinese-origin models
+# are deliberately excluded. See docs/MODELS.md for the reasoning and the tradeoffs.
+#
+# VERIFY markers: Hugging Face repository and file names for GGUF conversions change
+# between quantizer releases. Confirm each one before first install. After the first
+# successful pull, `palisade install` records the SHA-256 in manifest.lock and every
+# later run refuses to start if a file on disk no longer matches.
+
+llama_cpp:
+  # Pinned llama.cpp release build. Bump deliberately; the tag is part of the audit manifest.
+  tag: b10830
+  base_url: https://github.com/ggml-org/llama.cpp/releases/download
+  # Asset selection by platform. Vulkan is the universal GPU path on Windows and Linux.
+  # llama.cpp does not ship a Linux CUDA binary, and Vulkan runs on NVIDIA, AMD, and Intel.
+  assets:
+    macos-arm64:            llama-{tag}-bin-macos-arm64.tar.gz       # Metal is compiled in
+    macos-x64:              llama-{tag}-bin-macos-x64.tar.gz
+    linux-x64-cpu:          llama-{tag}-bin-ubuntu-x64.tar.gz
+    linux-x64-vulkan:       llama-{tag}-bin-ubuntu-vulkan-x64.tar.gz
+    windows-x64-cpu:        llama-{tag}-bin-win-cpu-x64.zip
+    windows-x64-vulkan:     llama-{tag}-bin-win-vulkan-x64.zip
+    windows-x64-cuda:       llama-{tag}-bin-win-cuda-12.4-x64.zip
+  extra_assets:
+    windows-x64-cuda:       cudart-llama-bin-win-cuda-12.4-x64.zip   # CUDA runtime DLLs
+
+hf_base_url: https://huggingface.co
+
+# Hardware tiers. `palisade install` picks one from detected RAM and GPU; `tier:` in
+# settings.yaml overrides. Sizes are approximate on-disk GGUF sizes.
+tiers:
+  small:
+    description: 16 GB RAM, CPU only or small integrated GPU
+    min_ram_gb: 12
+    base: gemma4-e4b
+    guardian: shieldgemma-2b
+  standard:
+    description: 32 GB RAM, or any discrete GPU with 8 GB or more VRAM
+    min_ram_gb: 24
+    base: gemma4-12b
+    guardian: shieldgemma-2b
+    secondary_guardian: granite-guardian-8b   # optional second classifier, see docs/COMPLIANCE.md
+
+models:
+  # ---- Assistant (base) models ----
+  gemma4-e4b:
+    role: base
+    lab: Google DeepMind (US)
+    license: Apache-2.0
+    repo: VERIFY/gemma-4-E4B-it-GGUF
+    file: gemma-4-E4B-it-Q4_K_M.gguf
+    approx_gb: 3.0
+    notes: Best fit for CPU-only 16 GB machines.
+
+  gemma4-12b:
+    role: base
+    lab: Google DeepMind (US)
+    license: Apache-2.0
+    repo: VERIFY/gemma-4-12B-it-GGUF
+    file: gemma-4-12B-it-Q4_K_M.gguf
+    approx_gb: 7.5
+    notes: Dense model; takes LoRA style adapters cleanly. Slow on CPU, fine with any GPU.
+
+  olmo3-7b:
+    role: base
+    lab: Allen Institute for AI (US)
+    license: Apache-2.0
+    repo: VERIFY/Olmo-3-7B-Instruct-GGUF
+    file: Olmo-3-7B-Instruct-Q4_K_M.gguf
+    approx_gb: 4.5
+    notes: Training corpus is published. Choose this when data lineage matters more than raw quality.
+
+  # ---- Guardian (classifier) models ----
+  shieldgemma-2b:
+    role: guardian
+    lab: Google DeepMind (US)
+    license: Gemma Terms of Use
+    repo: VERIFY/shieldgemma-2b-GGUF
+    file: shieldgemma-2b-Q8_0.gguf
+    approx_gb: 2.7
+    adapter: yes_no
+    positive_token: "Yes"
+    negative_token: "No"
+    notes: Fast enough for CPU. Classifies one policy statement per call; Palisade can combine categories.
+
+  granite-guardian-8b:
+    role: guardian
+    lab: IBM (US)
+    license: Apache-2.0
+    repo: VERIFY/granite-guardian-3.3-8b-GGUF
+    file: granite-guardian-3.3-8b-Q4_K_M.gguf
+    approx_gb: 5.0
+    adapter: yes_no
+    positive_token: "Yes"
+    negative_token: "No"
+    notes: Stronger on prompt injection than ShieldGemma; over-blocks some benign traffic. Use as second opinion on standard tier.

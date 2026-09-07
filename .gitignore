@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Palisade runtime data (models, binaries, audit logs, generated reports)
+data/
+*.gguf
+
+# Operator's real policy — keep private, never commit
+config/policy.local.yaml
+
+# OS
+.DS_Store
+Thumbs.db
