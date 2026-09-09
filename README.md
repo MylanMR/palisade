@@ -55,7 +55,16 @@ The script builds a virtualenv, installs dependencies, downloads the pinned bina
 
 Before first install, open `config/models.yaml` and replace each `VERIFY/` repository id with the real Hugging Face GGUF repo (see `docs/MODELS.md`). GGUF conversions are community-published and their repo names move between quantizer releases, so this one manual step keeps the supply chain honest. If you already have GGUF files, point the installer straight at them: `python -m palisade install --model-url gemma4-12b=file:///path/to/model.gguf`.
 
-The repository ships a generic example policy at `config/policy.yaml`. To run your own policy without committing it, copy that file to `config/policy.local.yaml` and edit it there. Palisade loads the local file in preference to the example when it exists, and `.gitignore` excludes it, so your real rule text never enters version control. The hash of whichever policy is in force is recorded in `manifest.lock`, so the audit trail still ties every decision to the exact policy that produced it.
+### Choosing a policy
+
+The policy is the file that decides what gets blocked, flagged, or allowed. The repository ships two example policies so you can start from whichever suits you:
+
+- `config/policy.example-blank.yaml` — a minimal skeleton with the required category structure and generic rule text. Start here to write your own rules from scratch.
+- `config/policy.example-standard.yaml` — a broader, ready-to-use policy covering the common hazard categories. Start here if you want a sensible default to build on.
+
+Out of the box, `config/policy.yaml` (the file Palisade actually enforces) is a copy of the standard example, so the system runs with a useful policy on first launch. To switch, copy either example over `config/policy.yaml` and edit it.
+
+If you want your working policy kept out of version control, copy it to `config/policy.local.yaml` instead. Palisade loads `policy.local.yaml` in preference to `policy.yaml` when it exists, and `.gitignore` excludes it, so your private rule text never enters a public repo. Either way, the hash of whichever policy is in force is recorded in `manifest.lock`, so the audit trail always ties a decision to the exact policy that produced it.
 
 ## Commands
 

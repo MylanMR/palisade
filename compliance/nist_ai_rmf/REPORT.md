@@ -2,7 +2,7 @@
 
 Framework: NIST.AI.100-1 (AI RMF 1.0) with NIST.AI.600-1 (Generative AI Profile)  
 Verified against https://www.nist.gov/itl/ai-risk-management-framework on 2026-09-06  
-Catalog version 1.0.0, generated 2026-09-07T01:32:22Z
+Catalog version 1.0.0, generated 2026-09-09T02:40:28Z
 
 ## Summary
 
@@ -20,7 +20,7 @@ Coverage is computed only over controls a single desktop runtime control can bea
 |---------|----|--------|--------|----------|
 | GOVERN-1.1 | GOVERN | manual | manual_attestation_required | Palisade documents the enforced policy and its provenance, but mapping to the operator's specific legal obligations is an organizational task. |
 | GOVERN-1.2 | GOVERN | auto | met | policy.yaml with categories |
-| GOVERN-1.4 | GOVERN | auto | met | policy version 1.0.0-example |
+| GOVERN-1.4 | GOVERN | auto | met | policy version 1.0.0-standard-example |
 | GOVERN-1.5 | GOVERN | auto | partial | audit subsystem implemented; no records yet (run the server to generate) |
 | GOVERN-1.6 | GOVERN | auto | partial | manifest.lock not yet written (created by `palisade install`); schema defined |
 | GOVERN-4.1 | GOVERN | auto | partial | manifest.lock not yet written (created by `palisade install`); schema defined |

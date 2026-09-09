@@ -153,3 +153,20 @@ def test_local_policy_preferred(tmp_path, monkeypatch):
     (cfg / "policy.local.yaml").write_text("version: real\ncategories: []\ntemplates: {input: '', output: ''}\n")
     assert palisade.policy_path().name == "policy.local.yaml"
     assert palisade.load_policy()["version"] == "real"
+
+
+# ---------- shipped example policies ----------
+def test_example_policies_valid_and_consistent():
+    """Both shipped examples parse and expose the category IDs the code/benchmark rely on."""
+    import yaml
+    from pathlib import Path
+    from palisade.policy import Policy
+
+    required_ids = {"weapons_cbrne", "cyber_offense", "child_safety", "self_harm",
+                    "hate_harassment", "prompt_injection"}
+    for name in ("policy.example-blank.yaml", "policy.example-standard.yaml", "policy.yaml"):
+        raw = yaml.safe_load(Path("config", name).read_text())
+        pol = Policy(raw)                       # constructs = structurally valid
+        ids = {c.id for c in pol.categories}
+        assert required_ids <= ids, f"{name} missing required category IDs: {required_ids - ids}"
+        assert pol.version, f"{name} has no version"
