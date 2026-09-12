@@ -58,7 +58,7 @@ models:
     role: base
     lab: Google DeepMind (US)
     license: Apache-2.0
-    repo: VERIFY/gemma-4-12B-it-GGUF
+    repo: lmstudio-community/gemma-4-12B-it-GGUF
     file: gemma-4-12B-it-Q4_K_M.gguf
     approx_gb: 7.5
     notes: Dense model; takes LoRA style adapters cleanly. Slow on CPU, fine with any GPU.
@@ -77,8 +77,8 @@ models:
     role: guardian
     lab: Google DeepMind (US)
     license: Gemma Terms of Use
-    repo: VERIFY/shieldgemma-2b-GGUF
-    file: shieldgemma-2b-Q8_0.gguf
+    repo: mradermacher/shieldgemma-2b-GGUF
+    file: shieldgemma-2b.Q8_0.gguf
     approx_gb: 2.7
     adapter: yes_no
     positive_token: "Yes"

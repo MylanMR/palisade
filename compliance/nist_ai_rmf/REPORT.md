@@ -2,13 +2,13 @@
 
 Framework: NIST.AI.100-1 (AI RMF 1.0) with NIST.AI.600-1 (Generative AI Profile)  
 Verified against https://www.nist.gov/itl/ai-risk-management-framework on 2026-09-06  
-Catalog version 1.0.0, generated 2026-09-09T02:40:28Z
+Catalog version 1.0.0, generated 2026-09-12T03:13:01Z
 
 ## Summary
 
 - In-scope controls scored: **22**
-- In-scope coverage: **84%**
-- Coverage by function: GOVERN 75%, MAP 100%, MEASURE 86%, MANAGE 80%
+- In-scope coverage: **100%**
+- Coverage by function: GOVERN 100%, MAP 100%, MEASURE 100%, MANAGE 100%
 - Manual attestations required: **1**
 - GenAI-profile risks scored: **10** at **65%** (2 out of scope)
 
@@ -19,27 +19,27 @@ Coverage is computed only over controls a single desktop runtime control can bea
 | Control | Fn | Method | Status | Evidence |
 |---------|----|--------|--------|----------|
 | GOVERN-1.1 | GOVERN | manual | manual_attestation_required | Palisade documents the enforced policy and its provenance, but mapping to the operator's specific legal obligations is an organizational task. |
-| GOVERN-1.2 | GOVERN | auto | met | policy.yaml with categories |
-| GOVERN-1.4 | GOVERN | auto | met | policy version 1.0.0-standard-example |
-| GOVERN-1.5 | GOVERN | auto | partial | audit subsystem implemented; no records yet (run the server to generate) |
-| GOVERN-1.6 | GOVERN | auto | partial | manifest.lock not yet written (created by `palisade install`); schema defined |
-| GOVERN-4.1 | GOVERN | auto | partial | manifest.lock not yet written (created by `palisade install`); schema defined |
+| GOVERN-1.2 | GOVERN | auto | met | policy.local.yaml with categories |
+| GOVERN-1.4 | GOVERN | auto | met | policy version 1.0.0 |
+| GOVERN-1.5 | GOVERN | auto | met | 1 audit file(s) on disk |
+| GOVERN-1.6 | GOVERN | auto | met | manifest.lock sections present: ['config', 'llama_cpp', 'models'] |
+| GOVERN-4.1 | GOVERN | auto | met | manifest.lock sections present: ['config', 'llama_cpp', 'models'] |
 | GOVERN-6.1 | GOVERN | auto | met | 5/5 models document lab+license+repo |
 | MAP-1.1 | MAP | auto | met | docs/ARCHITECTURE.md present |
 | MAP-2.3 | MAP | auto | met | docs/ARCHITECTURE.md present |
 | MAP-3.4 | MAP | auto | met | check_output=True |
 | MAP-4.1 | MAP | auto | met | 5/5 models document lab+license+repo |
 | MEASURE-1.1 | MEASURE | auto | met | eval command present; 12 labeled cases |
-| MEASURE-2.3 | MEASURE | auto | partial | eval harness present; no report yet (run `palisade eval`) |
+| MEASURE-2.3 | MEASURE | auto | met | 1 eval report(s) retained |
 | MEASURE-2.6 | MEASURE | auto | met | input=True output=True |
 | MEASURE-2.7 | MEASURE | auto | met | policy category 'prompt_injection' present |
 | MEASURE-2.8 | MEASURE | auto | met | record carries ['base_model', 'guardian_model', 'manifest_hash', 'policy_version'] |
 | MEASURE-2.11 | MEASURE | auto | met | policy category 'hate_harassment' present |
-| MEASURE-4.2 | MEASURE | auto | partial | eval harness present; no report yet (run `palisade eval`) |
+| MEASURE-4.2 | MEASURE | auto | met | 1 eval report(s) retained |
 | MANAGE-1.2 | MANAGE | auto | met | actions in policy: ['block', 'flag'] |
-| MANAGE-2.3 | MANAGE | auto | partial | no audit records yet to verify; chain verified in unit tests |
+| MANAGE-2.3 | MANAGE | auto | met | chain intact over 1 records |
 | MANAGE-2.4 | MANAGE | auto | met | actions in policy: ['block', 'flag'] |
-| MANAGE-4.1 | MANAGE | auto | partial | audit subsystem implemented; no records yet (run the server to generate) |
+| MANAGE-4.1 | MANAGE | auto | met | 1 audit file(s) on disk |
 | MANAGE-4.3 | MANAGE | auto | met | retain_content=hashes (full available for incident review) |
 
 ## GenAI Profile risks (NIST.AI.600-1)
