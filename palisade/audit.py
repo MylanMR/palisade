@@ -10,6 +10,7 @@ previous file in `prev_hash`, so the chain spans files.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -17,7 +18,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Iterator
 
-from . import canonical_json, sha256_text
+from . import canonical_json, sha256_text, secure_mkdir, FILE_MODE, DIR_MODE, POSIX
 
 GENESIS = "0" * 64
 
@@ -56,9 +57,11 @@ class AuditRecord:
 
 
 class AuditLog:
-    def __init__(self, directory: Path, rotate_mb: int = 64):
+    def __init__(self, directory: Path, rotate_mb: int = 64,
+                 file_mode: int = FILE_MODE, dir_mode: int = DIR_MODE):
         self.dir = Path(directory)
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self.file_mode, self.dir_mode = file_mode, dir_mode
+        secure_mkdir(self.dir, dir_mode)
         self.rotate_bytes = rotate_mb * 1024 * 1024
         self._lock = threading.Lock()
         self._seq, self._last_hash, self._current = self._recover()
@@ -67,10 +70,10 @@ class AuditLog:
     def _files(self) -> list[Path]:
         return sorted(self.dir.glob("audit-*.jsonl"))
 
-    def _recover(self) -> tuple[int, str, Path]:
+    def _recover(self) -> tuple[int, str, Path | None]:
         files = self._files()
         if not files:
-            return 0, GENESIS, self._new_file()
+            return 0, GENESIS, None   # first file is created on first append
         last = files[-1]
         seq, h = 0, GENESIS
         for rec in self._iter_file(last):
@@ -85,8 +88,25 @@ class AuditLog:
 
     def _new_file(self) -> Path:
         p = self.dir / f"audit-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.jsonl"
-        p.touch()
+        # Create with the restrictive mode from the start so the file is never world-readable.
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND, self.file_mode)
+        os.close(fd)
+        if POSIX:
+            os.chmod(p, self.file_mode)
         return p
+
+    def apply_permissions(self) -> list[str]:
+        """Bring existing audit files and the directory to the configured modes.
+        Returns a list of paths that could not be changed (owned by another account)."""
+        failed = []
+        if not POSIX:
+            return failed
+        for target, mode in [(self.dir, self.dir_mode)] + [(f, self.file_mode) for f in self._files()]:
+            try:
+                os.chmod(target, mode)
+            except PermissionError:
+                failed.append(str(target))
+        return failed
 
     @staticmethod
     def _iter_file(path: Path) -> Iterator[dict]:
@@ -104,7 +124,7 @@ class AuditLog:
 
     def append(self, rec: AuditRecord) -> AuditRecord:
         with self._lock:
-            if self._current.stat().st_size >= self.rotate_bytes:
+            if self._current is None or self._current.stat().st_size >= self.rotate_bytes:
                 self._current = self._new_file()
             self._seq += 1
             rec.seq = self._seq
@@ -126,6 +146,29 @@ class AuditLog:
             if len(out) >= n:
                 break
         return out[-n:]
+
+    def records(self, decision: str | None = None, limit: int = 100,
+                before_seq: int | None = None) -> list[dict]:
+        """Newest-first page of records, optionally filtered by decision.
+        decision may be a single value or 'blocked' (either blocked stage)."""
+        out: list[dict] = []
+        for f in reversed(self._files()):
+            for rec in reversed(list(self._iter_file(f))):
+                if before_seq is not None and rec["seq"] >= before_seq:
+                    continue
+                d = rec.get("decision")
+                if decision == "blocked" and not str(d).startswith("blocked"):
+                    continue
+                if decision and decision != "blocked" and d != decision:
+                    continue
+                out.append(rec)
+                if len(out) >= limit:
+                    return out
+        return out
+
+    def all_records(self) -> Iterator[dict]:
+        for f in self._files():
+            yield from self._iter_file(f)
 
     def verify(self) -> dict[str, Any]:
         """Walk every file in order and recompute the chain."""

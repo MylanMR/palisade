@@ -30,6 +30,8 @@ def make_client(tmp_path, monkeypatch):
     import palisade.server as srv
     settings = load_settings()
     settings["audit"]["directory"] = str(tmp_path / "audit")
+    monkeypatch.setattr(srv, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(srv, "LOGS_DIR", tmp_path / "logs")
 
     class FakeResp:
         status_code = 200

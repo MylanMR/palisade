@@ -197,3 +197,55 @@ def verify_installation(manifest: dict, tier: str) -> list[str]:
         elif sha256_file(cfg_file) != h:
             problems.append(f"config/{name} changed since install (run `palisade install` to re-lock)")
     return problems
+
+
+def manifest_components(manifest: dict, tier: str, full: bool = False) -> dict:
+    """Per-component integrity status for the Runtime panel.
+
+    quick (default): config files and the llama-server binary are re-hashed (small files);
+                     models are checked for presence and size only.
+    full:            every model file is re-hashed too. Several seconds for multi-GB models.
+    """
+    from . import policy_path
+    lock = read_lock()
+    comps: list[dict] = []
+
+    def row(kind, name, path, recorded, rehash):
+        exists = path is not None and Path(path).exists()
+        if not exists:
+            status = "missing"
+        elif recorded is None:
+            status = "unlocked"
+        elif rehash:
+            status = "match" if sha256_file(Path(path)) == recorded else "mismatch"
+        else:
+            status = "present"
+        comps.append({"kind": kind, "name": name, "sha256": recorded or "",
+                      "status": status, "rehashed": bool(rehash and exists)})
+
+    lc = lock.get("llama_cpp", {})
+    server = None
+    for cand in ("llama-server", "llama-server.exe"):
+        p = BIN_DIR / lc.get("tag", "") / cand
+        if p.exists():
+            server = p
+    row("binary", f"llama-server {lc.get('tag', '?')}", server, lc.get("server_sha256"), True)
+
+    t = manifest["tiers"][tier]
+    for mid in (t["base"], t["guardian"]):
+        row("model", mid, model_path(mid, manifest),
+            lock.get("models", {}).get(mid, {}).get("sha256"), full)
+
+    active_policy = policy_path().name
+    for name, h in lock.get("config", {}).items():
+        row("config", name, CONFIG_DIR / name, h, True)
+    if active_policy not in lock.get("config", {}):
+        comps.append({"kind": "config", "name": active_policy, "sha256": "",
+                      "status": "unlocked", "rehashed": False})
+
+    bad = [c for c in comps if c["status"] in ("missing", "mismatch", "unlocked")]
+    return {"mode": "full" if full else "quick",
+            "status": "match" if not bad else "drift",
+            "problems": [f"{c['kind']} {c['name']}: {c['status']}" for c in bad],
+            "components": comps,
+            "llama_cpp_tag": lc.get("tag", "")}

@@ -4,50 +4,71 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Palisade</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/shared.css">
 <style>
-  :root {
-    --paper: #ECEEF0; --panel: #FFFFFF; --ink: #1A1F26; --muted: #5B6470;
-    --rule: #D3D7DC; --ok: #245C8A; --flag: #A8681C; --block: #9B3A32;
-    --font: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--font); }
-  .app { display: grid; grid-template-columns: minmax(0, 1fr) 320px; height: 100%; }
-  @media (max-width: 900px) { .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 360px; height: 100%; }
+  @media (max-width: 960px) { .app { grid-template-columns: 1fr; height: auto; } }
+  main { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+  @media (max-width: 960px) { main { height: 80vh; } }
+  header { padding: 18px 28px 12px; border-bottom: 1px solid var(--rule); }
+  header p { margin: 3px 0 0; color: var(--muted); font-size: 14px; max-width: 70ch; }
+  #log { flex: 1; overflow-y: auto; padding: 22px 28px; }
+  .turn { max-width: 72ch; margin: 0 0 24px; }
+  .who { font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ledger { margin-top: 8px; padding: 6px 0 6px 12px; border-left: 3px solid var(--ok); font-size: 13px; color: var(--muted); }
+  .ledger.flagged { border-color: var(--flag); } .ledger.blocked_input, .ledger.blocked_output { border-color: var(--block); }
+  .ledger strong { color: var(--ink); display: block; margin-bottom: 2px; }
+  .empty { color: var(--muted); max-width: 62ch; }
+  form { display: flex; gap: 10px; padding: 14px 28px 18px; border-top: 1px solid var(--rule); background: var(--panel); }
+  textarea { flex: 1; resize: none; min-height: 48px; max-height: 200px; padding: 10px 12px; font: inherit; border: 1px solid var(--rule); border-radius: 4px; color: var(--ink); }
+  form button { padding: 0 20px; }
 
-  main { display: flex; flex-direction: column; min-width: 0; }
-  header { padding: 18px 28px 10px; border-bottom: 1px solid var(--rule); }
-  header h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: 0.01em; }
-  header p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+  aside { border-left: 1px solid var(--rule); background: var(--panel); overflow-y: auto; }
+  @media (max-width: 960px) { aside { border-left: 0; border-top: 1px solid var(--rule); } }
+  aside section { padding: 16px 20px; border-bottom: 1px solid var(--rule); }
+  aside section:last-child { border-bottom: 0; }
+  .sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .sec-head .status { font-size: 13px; }
+  .name { font-weight: 600; }
+  .line { font-size: 13.5px; margin: 2px 0; }
+  details { margin-top: 8px; font-size: 13px; }
+  summary { cursor: pointer; color: var(--ok); }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 8px 0 0; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .actions button, .actions a { font-size: 12.5px; padding: 4px 9px; }
 
-  #log { flex: 1; overflow-y: auto; padding: 20px 28px; }
-  .turn { max-width: 72ch; margin: 0 0 26px; }
-  .who { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-  .text { white-space: pre-wrap; word-wrap: break-word; }
-  .ledger { margin-top: 8px; padding-left: 12px; border-left: 3px solid var(--ok); font-size: 13px; color: var(--muted); }
-  .ledger.flagged { border-color: var(--flag); }
-  .ledger.blocked_input, .ledger.blocked_output { border-color: var(--block); }
-  .ledger b { color: var(--ink); font-weight: 600; }
-  .ledger code { font: 12px var(--mono); }
-  .empty { color: var(--muted); max-width: 60ch; }
+  /* Guardian threshold scale */
+  .scale { position: relative; height: 44px; margin: 10px 0 4px; }
+  .scale .track { position: absolute; top: 20px; left: 0; right: 0; height: 4px; background: linear-gradient(to right, var(--ok-bg) 0, var(--ok-bg) var(--t), var(--block-bg) var(--t)); border-radius: 2px; }
+  .scale .tick { position: absolute; top: 2px; width: 2px; height: 40px; background: var(--block); left: var(--t); }
+  .scale .mark { position: absolute; top: 0; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--panel); border: 2px solid var(--ink); font: 700 9px/12px var(--sans); text-align: center; }
+  .scale .mark.lane2 { top: 26px; }
+  .scale-legend { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
 
-  form { display: flex; gap: 10px; padding: 14px 28px 20px; border-top: 1px solid var(--rule); background: var(--panel); }
-  textarea { flex: 1; resize: none; min-height: 48px; max-height: 200px; padding: 10px 12px; font: inherit; border: 1px solid var(--rule); border-radius: 4px; background: #fff; color: var(--ink); }
-  textarea:focus, button:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
-  button { padding: 0 18px; font: inherit; font-weight: 600; border: 0; border-radius: 4px; background: var(--ink); color: #fff; cursor: pointer; }
-  button[disabled] { opacity: .5; cursor: default; }
+  /* Policy categories */
+  table.cats { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
+  table.cats td { padding: 3px 0; border-top: 1px solid var(--rule); vertical-align: top; }
+  table.cats td:last-child { text-align: right; color: var(--muted); }
 
-  aside { border-left: 1px solid var(--rule); background: var(--panel); padding: 18px 20px; overflow-y: auto; font-size: 14px; }
-  @media (max-width: 900px) { aside { border-left: 0; border-top: 1px solid var(--rule); } }
-  aside h2 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
-  aside section { margin-bottom: 22px; }
-  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; }
-  dt { color: var(--muted); }
-  dd { margin: 0; overflow-wrap: anywhere; }
-  dd code { font: 12px var(--mono); }
-  .chain-ok { color: var(--ok); } .chain-bad { color: var(--block); font-weight: 600; }
-  .err { color: var(--block); }
+  /* Manifest components */
+  ul.comps { list-style: none; padding: 0; margin: 8px 0 0; }
+  ul.comps li { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 4px 0; border-top: 1px solid var(--rule); }
+  ul.comps .hash { grid-column: 1 / -1; color: var(--muted); }
+
+  /* The audit chain: the one deliberate visual flourish. Each record links to the previous one. */
+  ol.chain { list-style: none; margin: 12px 0 0; padding: 0 0 0 16px; position: relative; }
+  ol.chain::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 2px; background: repeating-linear-gradient(to bottom, var(--ok) 0 6px, transparent 6px 9px); }
+  ol.chain li { position: relative; margin: 0 0 8px; padding: 6px 9px; border: 1px solid var(--rule); border-radius: 4px; background: var(--soft); font-size: 12.5px; }
+  ol.chain li::before { content: ""; position: absolute; left: -15px; top: 12px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ok); background: var(--panel); }
+  ol.chain li.head { border-color: var(--ok); background: var(--ok-bg); }
+  ol.chain li.head::before { background: var(--ok); }
+  ol.chain li.flagged::before { border-color: var(--flag); } ol.chain li.blocked_input::before, ol.chain li.blocked_output::before { border-color: var(--block); }
+  .rec-top { display: flex; justify-content: space-between; gap: 6px; }
+  .rec-links { color: var(--muted); }
+  .rec-links code { font-size: 11.5px; }
 </style>
 </head>
 <body>
@@ -55,81 +76,225 @@
   <main>
     <header>
       <h1>Palisade</h1>
-      <p>Local assistant. Every exchange is checked against policy and written to a hash-chained audit log.</p>
+      <p>A local assistant. Each message and each answer is checked against the content policy before you see it, and every exchange is written to a tamper-evident audit log.</p>
     </header>
-    <div id="log">
-      <p class="empty">Ask something. Below each answer you will see the decision, the guardian scores, and the audit record it produced.</p>
+    <div id="log" aria-live="polite">
+      <p class="empty">Ask something. Under each answer you'll see what the guardian decided and the audit record the exchange created.</p>
     </div>
     <form id="f">
+      <label for="msg" class="muted small" style="position:absolute;left:-9999px">Message</label>
       <textarea id="msg" placeholder="Message" rows="2" required></textarea>
-      <button id="send" type="submit">Send</button>
+      <button id="send" class="primary" type="submit">Send</button>
     </form>
   </main>
-  <aside>
-    <section>
-      <h2>Runtime</h2>
-      <dl id="status"><dt>Loading</dt><dd></dd></dl>
+
+  <aside aria-label="Runtime">
+    <section id="s-assistant">
+      <div class="sec-head"><h2>Assistant</h2><span id="a-health"></span></div>
+      <div class="line name" id="a-name">Loading</div>
+      <div class="line muted" id="a-sub"></div>
+      <details><summary>Provenance</summary><dl id="a-prov"></dl></details>
     </section>
-    <section>
-      <h2>Audit chain</h2>
-      <dl id="chain"><dt></dt><dd></dd></dl>
+
+    <section id="s-guardian">
+      <div class="sec-head"><h2>Guardian</h2><span id="g-health"></span></div>
+      <div class="line name" id="g-name"></div>
+      <div class="line muted" id="g-mode"></div>
+      <div id="g-checks"></div>
+      <div class="line" id="g-thresh"></div>
+      <div class="scale" id="g-scale" aria-hidden="true"><div class="track"></div><div class="tick"></div></div>
+      <div class="scale-legend" aria-hidden="true"><span>Allowed</span><span>Blocked</span></div>
+      <div class="line muted small" id="g-last">No messages checked yet.</div>
+      <div class="line small" id="g-session"></div>
+      <details><summary>Provenance</summary><dl id="g-prov"></dl></details>
+    </section>
+
+    <section id="s-policy">
+      <div class="sec-head"><h2>Policy</h2><span id="p-lock"></span></div>
+      <div class="line name" id="p-name"></div>
+      <div class="line muted" id="p-sum"></div>
+      <div id="p-notice"></div>
+      <details><summary>Categories and actions</summary><table class="cats" id="p-cats"></table></details>
+    </section>
+
+    <section id="s-manifest">
+      <div class="sec-head"><h2>Manifest</h2><span id="m-status"></span></div>
+      <div class="line">Fingerprint <span id="m-hash"></span></div>
+      <div class="line muted small" id="m-when"></div>
+      <div id="m-problems"></div>
+      <div class="actions">
+        <button type="button" id="m-quick">Check again</button>
+        <button type="button" id="m-full">Re-hash models</button>
+        <a class="btn" id="m-export" href="/api/manifest/export" download>Export manifest</a>
+      </div>
+      <details id="m-details"><summary>Components</summary><ul class="comps" id="m-comps"></ul></details>
+    </section>
+
+    <section id="s-audit">
+      <div class="sec-head"><h2>Audit chain</h2><span id="c-status"></span></div>
+      <div class="line small"><span id="c-count"></span></div>
+      <div class="line small muted" id="c-when"></div>
+      <ol class="chain" id="c-chain" aria-label="Most recent audit records"></ol>
+      <div class="actions">
+        <button type="button" id="c-verify">Verify now</button>
+        <a class="btn" href="/review">Open audit review</a>
+      </div>
     </section>
   </aside>
 </div>
+<script src="/static/shared.js"></script>
 <script>
-const $ = s => document.querySelector(s);
 const log = $('#log'), form = $('#f'), msg = $('#msg'), send = $('#send');
 const history = [];
+const sessionChain = [];     // records produced in this browser session, newest last
+let runtime = null;
 
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
-function short(h) { return h ? h.slice(0, 12) : ''; }
+// ---------- Runtime panel ----------
+function setDL(dl, rows) {
+  clear(dl);
+  for (const [k, v] of rows) if (v) dl.append(el('dt', {}, k), el('dd', {}, v));
+}
+function health(node, ok) {
+  clear(node).append(ok === undefined ? statusEl('', 'Checking') : ok ? statusEl('ok', 'Running') : statusEl('bad', 'Not responding'));
+}
 
+function renderAssistant(a) {
+  $('#a-name').textContent = a.label;
+  $('#a-sub').textContent = `${a.quant} quantization, running on ${a.backend_label || a.backend}`;
+  health($('#a-health'), a.healthy);
+  setDL($('#a-prov'), [['Lab', a.lab], ['License', a.license], ['Source', a.repo], ['File', a.file],
+    ['SHA-256', a.sha256 ? hashLine(a.sha256) : null]]);
+}
+
+function renderGuardian(g, session) {
+  $('#g-name').textContent = `${g.label}, ${g.quant}`;
+  $('#g-mode').textContent = `Mode: ${g.mode_text}`;
+  health($('#g-health'), g.healthy);
+  const checks = clear($('#g-checks'));
+  checks.append(
+    el('div', { class: 'line small' }, g.check_input ? statusEl('ok', 'Screens your messages') : statusEl('bad', 'Message screening is off')),
+    el('div', { class: 'line small' }, g.check_output ? statusEl('ok', 'Screens answers') : statusEl('bad', 'Answer screening is off')));
+  if (!g.check_input || !g.check_output)
+    checks.append(el('div', { class: 'notice bad' },
+      'A screening stage is disabled in settings.yaml. Content passing through that stage is not checked against the policy.'));
+  $('#g-thresh').textContent = `Blocks when the likelihood of a policy violation is ${pct(g.threshold)} or higher.`;
+  $('#g-scale').style.setProperty('--t', pct(g.threshold));
+  renderLast(session);
+  setDL($('#g-prov'), [['Lab', g.lab], ['License', g.license], ['Source', g.repo], ['File', g.file],
+    ['SHA-256', g.sha256 ? hashLine(g.sha256) : null]]);
+}
+
+function renderLast(session) {
+  const scale = $('#g-scale');
+  scale.querySelectorAll('.mark').forEach(m => m.remove());
+  const last = (session && session.last) || {};
+  const parts = [];
+  for (const [stage, letter, word, lane] of [['input', 'M', 'message', ''], ['output', 'A', 'answer', ' lane2']]) {
+    const v = last[stage];
+    if (!v) continue;
+    const left = Math.min(Math.max(Number(v.p) * 100, 3), 97);   // keep the marker fully on the scale
+    scale.append(el('div', { class: 'mark' + lane, style: `left:${left}%`, title: `Last ${word}: ${pct(v.p)}` }, letter));
+    parts.push(`last ${word} ${pct(v.p)}`);
+  }
+  $('#g-last').textContent = parts.length
+    ? `Latest: ${parts.join(', ')}. M marks the message, A the answer.` : 'No messages checked yet.';
+  const c = (session && session.counts) || {};
+  const blocked = (c.blocked_input || 0) + (c.blocked_output || 0);
+  $('#g-session').textContent = `This session: ${c.messages || 0} checked, ${blocked} blocked, ${c.flagged || 0} flagged.`;
+}
+
+function renderPolicy(p) {
+  $('#p-name').textContent = `Version ${p.version}`;
+  $('#p-sum').textContent = `From ${p.source}. ${p.categories.length} categories: ${p.counts.block} block, ${p.counts.flag} flag` +
+    (p.counts.allow ? `, ${p.counts.allow} record only.` : '.');
+  clear($('#p-lock')).append(!p.locked ? statusEl('warn', 'Not locked')
+    : p.matches_lock ? statusEl('ok', 'Matches lock') : statusEl('bad', 'Changed since install'));
+  const n = clear($('#p-notice'));
+  if (p.is_example) n.append(el('div', { class: 'notice' },
+    'This is an unmodified example policy. Review and tune it before relying on it.'));
+  if (p.source === 'policy.local.yaml') n.append(el('div', { class: 'line muted small' },
+    'A private override (policy.local.yaml) is in force instead of policy.yaml.'));
+  const t = clear($('#p-cats'));
+  for (const c of p.categories) {
+    const scope = c.applies_to.length === 2 ? 'messages and answers' : c.applies_to[0] === 'input' ? 'messages' : 'answers';
+    t.append(el('tr', {}, el('td', {}, catName(c.id)),
+      el('td', {}, el('span', { class: 'chip ' + c.action }, c.action)), el('td', {}, scope)));
+  }
+}
+
+function renderManifestSummary(m) {
+  clear($('#m-hash')).append(hashLine(m.hash));
+}
+async function checkManifest(full) {
+  const quick = $('#m-quick'), fullB = $('#m-full');
+  quick.disabled = fullB.disabled = true;
+  clear($('#m-status')).append(statusEl('', full ? 'Re-hashing models' : 'Checking'));
+  $('#m-when').textContent = full ? 'Re-hashing every model file. This takes several seconds for multi-GB models.' : '';
+  try {
+    const r = await api('/api/manifest?full=' + (full ? 'true' : 'false'));
+    clear($('#m-status')).append(r.status === 'match' ? statusEl('ok', 'Matches install lock') : statusEl('bad', 'Drift detected'));
+    $('#m-when').textContent = `${r.mode === 'full' ? 'Full check' : 'Quick check'} at ${r.checked_at}.` +
+      (r.mode === 'quick' ? ' Config and binary re-hashed; models checked for presence.' : ' Every file re-hashed.');
+    const pb = clear($('#m-problems'));
+    if (r.problems.length) pb.append(el('div', { class: 'notice bad' }, 'Problems: ' + r.problems.join('; ')));
+    const ul = clear($('#m-comps'));
+    for (const c of r.components) {
+      const kind = { match: ['ok', 'Matches'], present: ['ok', 'Present'], mismatch: ['bad', 'Mismatch'],
+                     missing: ['bad', 'Missing'], unlocked: ['warn', 'Not locked'] }[c.status] || ['', c.status];
+      ul.append(el('li', {}, el('span', {}, `${c.kind}: ${c.name}`), statusEl(kind[0], kind[1]),
+        c.sha256 ? el('span', { class: 'hash' }, hashLine(c.sha256)) : null));
+    }
+  } catch (e) {
+    clear($('#m-status')).append(statusEl('warn', 'Unavailable'));
+    $('#m-when').textContent = e.message;
+  } finally { quick.disabled = fullB.disabled = false; }
+}
+
+// ---------- Audit chain ----------
+function renderChain(v) {
+  clear($('#c-status')).append(v.intact ? statusEl('ok', 'Intact') : statusEl('bad', `Broken at record ${v.first_break && v.first_break.seq}`));
+  $('#c-count').textContent = `${v.records} record${v.records === 1 ? '' : 's'} in the log.`;
+  $('#c-when').textContent = v.checked_at ? `Verified at ${v.checked_at}.` : '';
+  const ol = clear($('#c-chain'));
+  const items = sessionChain.slice(-4).reverse();
+  if (!items.length) {
+    ol.append(el('li', { class: 'head' }, el('div', { class: 'rec-top' }, el('span', {}, 'Current head'), hashLine(v.head_hash)),
+      el('div', { class: 'rec-links small' }, 'Records from this session will appear here as you send messages.')));
+    return;
+  }
+  items.forEach((r, i) => ol.append(el('li', { class: (i === 0 ? 'head ' : '') + r.decision },
+    el('div', { class: 'rec-top' }, el('span', {}, `Record ${r.seq}`), el('span', { class: 'chip ' + r.decision }, r.decision.replace('_', ' '))),
+    el('div', { class: 'rec-links' }, 'hash ', el('code', { title: r.hash }, short(r.hash)), ', links to ', el('code', { title: r.prev_hash }, short(r.prev_hash))))));
+}
+async function verifyChain() {
+  const b = $('#c-verify'); b.disabled = true;
+  try { renderChain(await api('/api/audit/verify')); }
+  catch (e) { clear($('#c-status')).append(statusEl('warn', 'Unavailable')); }
+  finally { b.disabled = false; }
+}
+
+// ---------- Chat ----------
 function addTurn(who, text) {
   log.querySelector('.empty')?.remove();
-  const t = el('div', 'turn');
-  t.appendChild(el('div', 'who', who));
-  t.appendChild(el('div', 'text', text));
-  log.appendChild(t); log.scrollTop = log.scrollHeight;
+  const t = el('div', { class: 'turn' }, el('div', { class: 'who' }, who), el('div', { class: 'text' }, text));
+  log.append(t); log.scrollTop = log.scrollHeight;
   return t;
 }
-
 function ledger(turn, r) {
-  const d = el('div', 'ledger ' + r.decision);
-  const label = { answered: 'Answered', flagged: 'Answered, flagged for review',
-                  blocked_input: 'Blocked at input', blocked_output: 'Blocked at output' }[r.decision] || r.decision;
-  const scores = r.verdicts.map(v => `${v.stage} ${v.p_violation.toFixed(2)}${v.categories.length ? ' (' + v.categories.join(', ') + ')' : ''}`).join(' · ');
-  d.innerHTML = `<b>${label}</b> · guardian ${scores || 'skipped'} · ${r.latency_ms} ms<br>record #${r.audit.seq} <code>${short(r.audit.hash)}</code> follows <code>${short(r.audit.prev_hash)}</code>`;
-  turn.appendChild(d);
+  const scores = r.verdicts.map(v => `${v.stage === 'input' ? 'message' : 'answer'} ${pct(v.p_violation)}` +
+    (v.categories.length ? ` (${v.categories.map(catName).join(', ')})` : ''));
+  turn.append(el('div', { class: 'ledger ' + r.decision },
+    el('strong', {}, DECISION_TEXT[r.decision] || r.decision),
+    el('div', {}, `Violation likelihood: ${scores.join(', ') || 'not checked'}. Took ${(r.latency_ms / 1000).toFixed(1)} s.`),
+    el('div', {}, `Logged as record ${r.audit.seq}, hash `, el('code', { title: r.audit.hash }, short(r.audit.hash)),
+      ', linked to ', el('code', { title: r.audit.prev_hash }, short(r.audit.prev_hash)), '.')));
 }
-
-async function api(path, opts) {
-  const res = await fetch(path, opts);
-  const j = await res.json();
-  if (!res.ok) throw new Error(j.error || res.statusText);
-  return j;
-}
-
-function renderStatus(s) {
-  $('#status').innerHTML = [
-    ['Assistant', s.base_model], ['Guardian', `${s.guardian_model} (${s.guardian_mode}, threshold ${s.threshold})`],
-    ['Policy', 'v' + s.policy_version], ['Manifest', `<code>${short(s.manifest_hash)}</code>`],
-  ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
-  renderChain(s.audit);
-}
-function renderChain(a) {
-  $('#chain').innerHTML = [
-    ['Records', a.records],
-    ['Integrity', a.intact ? '<span class="chain-ok">intact</span>' : `<span class="chain-bad">broken at #${a.first_break?.seq}</span>`],
-    ['Head', `<code>${short(a.head_hash)}</code>`],
-  ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
-}
-
 form.addEventListener('submit', async e => {
   e.preventDefault();
   const text = msg.value.trim(); if (!text) return;
   msg.value = ''; send.disabled = true;
   addTurn('You', text);
-  const turn = addTurn('Assistant', '…');
+  const turn = addTurn('Assistant', 'Checking and answering…');
   try {
     const r = await api('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, history }) });
@@ -137,15 +302,41 @@ form.addEventListener('submit', async e => {
     ledger(turn, r);
     history.push({ role: 'user', content: text });
     if (r.decision === 'answered' || r.decision === 'flagged') history.push({ role: 'assistant', content: r.response });
-    renderChain(await api('/api/audit/verify'));
+    sessionChain.push({ seq: r.audit.seq, hash: r.audit.hash, prev_hash: r.audit.prev_hash, decision: r.decision });
+    await refreshHealth();
+    await verifyChain();
   } catch (err) {
-    turn.querySelector('.text').textContent = 'Request failed: ' + err.message;
-    turn.querySelector('.text').classList.add('err');
+    const t = turn.querySelector('.text');
+    t.textContent = err.status === 502 ? 'The assistant model did not answer. Check that it shows Running in the panel, then try again.'
+      : `Request failed: ${err.message}`;
+    t.style.color = 'var(--block)';
   } finally { send.disabled = false; msg.focus(); }
 });
 msg.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
 
-api('/api/status').then(renderStatus).catch(e => { $('#status').innerHTML = `<dt class="err">Error</dt><dd>${e.message}</dd>`; });
+// ---------- Load and poll ----------
+async function refreshHealth() {
+  try {
+    const h = await api('/api/health');
+    health($('#a-health'), h.assistant); health($('#g-health'), h.guardian);
+    renderLast(h.session);
+  } catch { clear($('#a-health')).append(statusEl('warn', 'Unknown')); clear($('#g-health')).append(statusEl('warn', 'Unknown')); }
+}
+(async () => {
+  try {
+    runtime = await api('/api/status');
+    renderAssistant(runtime.assistant);
+    renderGuardian(runtime.guardian, runtime.session);
+    renderPolicy(runtime.policy);
+    renderManifestSummary(runtime.manifest);
+    renderChain(runtime.audit);
+    checkManifest(false);
+  } catch (e) { $('#a-name').textContent = 'Could not load runtime status: ' + e.message; }
+  setInterval(refreshHealth, 15000);
+})();
+$('#m-quick').addEventListener('click', () => checkManifest(false));
+$('#m-full').addEventListener('click', () => checkManifest(true));
+$('#c-verify').addEventListener('click', verifyChain);
 </script>
 </body>
 </html>

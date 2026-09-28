@@ -26,7 +26,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Path(__file__).with_name("catalog.yaml")
 CONFIG = ROOT / "config"
-DATA = ROOT / "data"
+import sys as _sys
+_sys.path.insert(0, str(ROOT))
+from palisade import DATA_DIR as DATA, LOCK_PATH  # honors PALISADE_DATA / PALISADE_LOCK
 
 
 # ---- evidence helpers -------------------------------------------------------
@@ -49,7 +51,7 @@ def _category_ids() -> set[str]:
 
 
 def _lock() -> dict:
-    p = DATA / "manifest.lock"
+    p = LOCK_PATH
     return json.loads(p.read_text()) if p.exists() else {}
 
 

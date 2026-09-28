@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from . import BIN_DIR, read_lock
+from . import BIN_DIR, LOGS_DIR, read_lock, secure_mkdir
 from .hardware import Host, threads, gpu_layers
 
 
@@ -41,7 +41,8 @@ class LlamaProcess:
             "--no-webui",
         ]
         self.proc: subprocess.Popen | None = None
-        self.log = model.parent / f"{name}-server.log"
+        # Logs go to the writable logs directory, never next to the (read-only) models.
+        self.log = secure_mkdir(LOGS_DIR) / f"{name}-server.log"
 
     def start(self) -> None:
         env = dict(os.environ)

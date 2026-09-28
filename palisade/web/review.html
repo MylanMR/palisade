@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Palisade audit review</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+  body { overflow-y: auto; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 22px 28px 48px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--rule); }
+  header p { margin: 3px 0 0; color: var(--muted); font-size: 14px; max-width: 72ch; }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 16px 18px; margin-top: 18px; }
+  #login form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  #login input { flex: 1; min-width: 260px; padding: 8px 10px; font: 13px var(--mono); border: 1px solid var(--rule); border-radius: 4px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px 20px; }
+  .summary .k { color: var(--muted); font-size: 12.5px; }
+  .summary .v { font-weight: 600; margin-top: 1px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-top: 18px; }
+  .filters { display: flex; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .filters button { border: 0; border-right: 1px solid var(--rule); border-radius: 0; font-weight: 500; }
+  .filters button:last-child { border-right: 0; }
+  .filters button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .exports { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .exports label { font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
+  .tablewrap { overflow-x: auto; margin-top: 12px; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12.5px; padding: 8px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.flagged td:first-child { box-shadow: inset 3px 0 var(--flag); }
+  tr.blocked_input td:first-child, tr.blocked_output td:first-child { box-shadow: inset 3px 0 var(--block); }
+  .content { color: var(--muted); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 60ch; }
+  .more { margin-top: 12px; }
+  #msg { margin-top: 10px; min-height: 1.4em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Audit review</h1>
+      <p>Records are read from the hash-chained audit log. Access requires the reviewer token, which only the audit group can read on disk.</p>
+    </div>
+    <div><a href="/">Back to assistant</a> <button type="button" id="logout" hidden>Sign out of review</button></div>
+  </header>
+
+  <section class="card" id="login" hidden>
+    <h2>Enter the reviewer token</h2>
+    <p class="small muted" id="token-hint">The token is stored in a file readable by the Palisade service account and the audit group.</p>
+    <form id="login-form">
+      <label for="tok" style="position:absolute;left:-9999px">Reviewer token</label>
+      <input id="tok" autocomplete="off" spellcheck="false" placeholder="Paste the reviewer token" required>
+      <button class="primary" type="submit">Open review</button>
+    </form>
+    <div id="login-msg" class="small"></div>
+  </section>
+
+  <div id="main" hidden>
+    <section class="card">
+      <div class="summary" id="summary"></div>
+      <div id="chain-notice"></div>
+    </section>
+
+    <div class="toolbar">
+      <div class="filters" role="group" aria-label="Filter by decision">
+        <button type="button" data-f="" aria-pressed="true">All</button>
+        <button type="button" data-f="flagged" aria-pressed="false">Flagged</button>
+        <button type="button" data-f="blocked" aria-pressed="false">Blocked</button>
+        <button type="button" data-f="answered" aria-pressed="false">Answered</button>
+      </div>
+      <div class="exports">
+        <label><input type="checkbox" id="incl"> Include message text</label>
+        <span class="small muted" id="incl-why" hidden>Not retained in this install</span>
+        <button type="button" id="export">Export review log</button>
+        <button type="button" id="anchor">Export anchor</button>
+      </div>
+    </div>
+    <div id="msg" class="small" aria-live="polite"></div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Record</th><th>Time (UTC)</th><th>Decision</th><th>Message score</th><th>Answer score</th><th>Categories</th><th>Policy</th><th>Hash</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="more"><button type="button" id="more" hidden>Load older records</button></div>
+  </div>
+</div>
+<script src="/static/shared.js"></script>
+<script>
+let filter = '', oldest = null, retain = 'hashes';
+// If the reviewer token is rotated while this page is open, any request returns 403.
+// Reloading asks the server again, which shows the sign-in screen.
+window.addEventListener('unhandledrejection', e => { if (e.reason && e.reason.status === 403) location.reload(); });
+
+function score(r, stage) {
+  const v = (r.verdicts || []).find(v => v.stage === stage);
+  return v ? pct(v.p_violation) : 'not checked';
+}
+function row(r) {
+  const cats = [...new Set((r.verdicts || []).flatMap(v => v.categories || []))].map(catName).join(', ') || 'none';
+  const tr = el('tr', { class: r.decision },
+    el('td', { class: 'num' }, r.seq),
+    el('td', {}, r.ts),
+    el('td', {}, el('span', { class: 'chip ' + r.decision }, r.decision.replace('_', ' '))),
+    el('td', { class: 'num' }, score(r, 'input')),
+    el('td', { class: 'num' }, score(r, 'output')),
+    el('td', {}, cats),
+    el('td', {}, r.policy_version),
+    el('td', {}, hashLine(r.hash)));
+  const rows = [tr];
+  if (r.prompt || r.response) rows.push(el('tr', { class: r.decision }, el('td', {}), el('td', { colspan: 7 },
+    el('div', { class: 'content' }, 'Message: ', r.prompt || ''), el('div', { class: 'content' }, 'Answer: ', r.response || ''))));
+  return rows;
+}
+async function loadRecords(reset) {
+  if (reset) { clear($('#rows')); oldest = null; }
+  const q = new URLSearchParams({ limit: 100 });
+  if (filter) q.set('decision', filter);
+  if (oldest) q.set('before', oldest);
+  const recs = await api('/api/review/records?' + q);
+  if (reset && !recs.length) $('#rows').append(el('tr', {}, el('td', { colspan: 8, class: 'muted' },
+    filter ? 'No records match this filter.' : 'The audit log has no records yet.')));
+  for (const r of recs) $('#rows').append(...row(r));
+  if (recs.length) oldest = recs[recs.length - 1].seq;
+  $('#more').hidden = recs.length < 100;
+}
+async function loadSummary() {
+  const s = await api('/api/review/summary');
+  retain = s.retain_content;
+  const v = s.verify, c = s.counts;
+  const blocked = (c.blocked_input || 0) + (c.blocked_output || 0);
+  const sum = clear($('#summary'));
+  const cell = (k, v) => el('div', {}, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v));
+  sum.append(
+    cell('Chain', v.intact ? statusEl('ok', 'Intact') : statusEl('bad', `Broken at record ${v.first_break.seq}`)),
+    cell('Records', String(v.records)),
+    cell('Blocked', String(blocked)),
+    cell('Flagged', String(c.flagged || 0)),
+    cell('Head hash', hashLine(v.head_hash)),
+    cell('Verified at', v.checked_at));
+  const n = clear($('#chain-notice'));
+  if (!v.intact) n.append(el('div', { class: 'notice bad' },
+    `The chain fails to recompute at record ${v.first_break.seq} in ${v.first_break.file}. Records from that point cannot be trusted. Preserve the files as they are and compare against your most recent off-box anchor.`));
+  const incl = $('#incl');
+  incl.disabled = retain !== 'full';
+  incl.parentElement.title = retain === 'full' ? '' : 'Message text is not retained. Set retain_content: full in settings.yaml to keep it.';
+  $('#incl-why').hidden = retain === 'full';
+  if (retain !== 'full') incl.checked = false;
+}
+async function download(path, opts, fallbackName) {
+  const res = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts));
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  const cd = res.headers.get('content-disposition') || '';
+  const name = (cd.match(/filename="([^"]+)"/) || [])[1] || fallbackName;
+  const blob = await res.blob();
+  const a = el('a', { href: URL.createObjectURL(blob), download: name });
+  document.body.append(a); a.click(); a.remove();
+  return { name, saved: res.headers.get('x-palisade-saved-to') };
+}
+async function showMain() {
+  $('#login').hidden = true; $('#main').hidden = false; $('#logout').hidden = false;
+  await loadSummary(); await loadRecords(true);
+}
+(async () => {
+  try {
+    const s = await api('/api/review/session');
+    $('#token-hint').textContent = `The token is stored at ${s.token_file}, readable by the Palisade service account and the audit group.`;
+    if (s.reviewer) await showMain(); else $('#login').hidden = false;
+  } catch (e) { $('#login').hidden = false; $('#login-msg').textContent = e.message; }
+})();
+$('#login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    await api('/api/review/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: $('#tok').value }) });
+    $('#tok').value = ''; await showMain();
+  } catch (err) {
+    $('#login-msg').textContent = err.status === 429 ? 'Too many failed attempts. Wait ten minutes and try again.'
+      : 'That token was not accepted. Copy it again from the token file.';
+    $('#login-msg').style.color = 'var(--block)';
+  }
+});
+$('#logout').addEventListener('click', async () => { await api('/api/review/logout', { method: 'POST' }); location.reload(); });
+document.querySelectorAll('.filters button').forEach(b => b.addEventListener('click', async () => {
+  document.querySelectorAll('.filters button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  filter = b.dataset.f; await loadRecords(true);
+}));
+$('#more').addEventListener('click', () => loadRecords(false));
+$('#export').addEventListener('click', async () => {
+  try {
+    const r = await download('/api/review/report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: filter || null, include_content: $('#incl').checked }) }, 'audit-review.log');
+    $('#msg').textContent = `Exported ${r.name}. A copy was also saved to ${r.saved}.`;
+  } catch (e) { $('#msg').textContent = 'Export failed: ' + e.message; }
+});
+$('#anchor').addEventListener('click', async () => {
+  try {
+    const r = await download('/api/review/anchor', {}, 'palisade-anchor.json');
+    $('#msg').textContent = `Exported ${r.name}. Store it somewhere this machine cannot modify, such as another system or removable media.`;
+  } catch (e) { $('#msg').textContent = 'Anchor export failed: ' + e.message; }
+});
+</script>
+</body>
+</html>

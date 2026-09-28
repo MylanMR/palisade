@@ -5,6 +5,12 @@
   python -m palisade doctor
   python -m palisade verify
   python -m palisade eval [--cases eval/cases.jsonl]
+  python -m palisade benchmark
+  python -m palisade audit report [--decision D] [--include-content] [--out FILE]
+  python -m palisade audit anchor [--out FILE]
+  python -m palisade audit check-anchor FILE
+  python -m palisade audit check-report FILE
+  python -m palisade audit permissions
 """
 from __future__ import annotations
 
@@ -15,8 +21,10 @@ import sys
 import time
 from pathlib import Path
 
-from . import (ROOT, DATA_DIR, __version__, load_settings, load_models,
-               read_lock, manifest_hash)
+import os
+
+from . import (ROOT, DATA_DIR, STATE_DIR, POSIX, __version__, load_settings, load_models,
+               read_lock, manifest_hash, audit_dir, secure_write_text)
 from .audit import AuditLog
 from .fetch import (install_binaries, install_model, model_path,
                     record_config_hashes, verify_installation)
@@ -63,7 +71,7 @@ def cmd_install(args):
 
 def cmd_verify(args):
     settings = load_settings()
-    log = AuditLog(ROOT / settings["audit"]["directory"], settings["audit"].get("rotate_mb", 64))
+    log = AuditLog(audit_dir(settings), settings["audit"].get("rotate_mb", 64))
     res = log.verify()
     print(json.dumps(res, indent=2))
     return 0 if res["intact"] else 2
@@ -107,9 +115,12 @@ def cmd_run(args):
             print(f"  - {p}")
         return 1
 
+    if POSIX:
+        os.umask(0o027)  # anything Palisade creates: no access for other accounts
     base, guard, guardian, t = _start_stack(settings, manifest, host, tier)
-    audit = AuditLog(ROOT / settings["audit"]["directory"], settings["audit"].get("rotate_mb", 64))
-    app = build_app(settings, base.url, guardian, t["base"], audit)
+    audit = AuditLog(audit_dir(settings), settings["audit"].get("rotate_mb", 64))
+    app = build_app(settings, base.url, guardian, t["base"], audit,
+                    models_cfg=manifest, tier=tier, backend=host.backend)
 
     def _stop(*_):
         print("\nstopping llama-server processes")
@@ -120,7 +131,9 @@ def cmd_run(args):
 
     s = settings["server"]
     print(f"\nPalisade ready: http://{s['host']}:{s['port']}/")
-    print(f"API token (for non-browser clients): {app.state.palisade['token']}\n")
+    print(f"API token (for non-browser clients): {app.state.palisade['token']}")
+    print(f"Audit review:  http://{s['host']}:{s['port']}/review")
+    print(f"Reviewer token file (audit group readable): {STATE_DIR / 'reviewer.token'}\n")
     try:
         uvicorn.run(app, host=s["host"], port=int(s["port"]), log_level="warning")
     finally:
@@ -181,6 +194,62 @@ def cmd_benchmark(args):
     return bm.main([])
 
 
+def _audit_log():
+    settings = load_settings()
+    return AuditLog(audit_dir(settings), settings["audit"].get("rotate_mb", 64))
+
+
+def cmd_audit(args):
+    """Review-side audit commands. Read-only against the chain, except `permissions`."""
+    from . import review
+    mhash = manifest_hash(read_lock()) if read_lock() else ""
+    if args.action == "report":
+        log = _audit_log()
+        text = review.render_report(log, decision=args.decision,
+                                    include_content=args.include_content, manifest_hash=mhash)
+        if args.out == "-":
+            sys.stdout.write(text)
+        else:
+            out = Path(args.out or f"audit-review-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.log")
+            secure_write_text(out, text)
+            print(f"review log written: {out.resolve()} (mode 0640)")
+        return 0 if log.verify()["intact"] else 2
+    if args.action == "anchor":
+        a = review.anchor(_audit_log(), mhash)
+        text = review.anchor_text(a)
+        if args.out:
+            secure_write_text(Path(args.out), text)
+            print(f"anchor written: {Path(args.out).resolve()}")
+        else:
+            sys.stdout.write(text)
+        print("Store this anchor off the machine (another system, removable media, or print).",
+              file=sys.stderr)
+        return 0
+    if args.action == "check-anchor":
+        a = json.loads(Path(args.file).read_text(encoding="utf-8"))
+        res = review.check_anchor(_audit_log(), a)
+        print(json.dumps(res, indent=2))
+        return 0 if res["valid"] else 2
+    if args.action == "check-report":
+        res = review.check_report(Path(args.file).read_text(encoding="utf-8"))
+        print(json.dumps(res, indent=2))
+        return 0 if res["valid"] else 2
+    if args.action == "verify":
+        return cmd_verify(args)
+    if args.action == "permissions":
+        log = _audit_log()
+        failed = log.apply_permissions()
+        print(f"audit directory: {log.dir}")
+        if failed:
+            print("could not change (owned by another account; run as the owner or with sudo):")
+            for f in failed:
+                print(f"  - {f}")
+            return 1
+        print("directory set to 2750, files set to 0640")
+        return 0
+    return 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="palisade")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -188,9 +257,25 @@ def main(argv=None):
     sub.add_parser("run"); sub.add_parser("doctor"); sub.add_parser("verify")
     e = sub.add_parser("eval"); e.add_argument("--cases", default=str(ROOT / "eval" / "cases.jsonl"))
     sub.add_parser("benchmark")
+    a = sub.add_parser("audit", help="review-side audit commands")
+    asub = a.add_subparsers(dest="action", required=True)
+    r = asub.add_parser("report", help="write a plain-text review log from the chain")
+    r.add_argument("--decision", choices=["answered", "flagged", "blocked", "blocked_input", "blocked_output"])
+    r.add_argument("--include-content", action="store_true",
+                   help="include prompt/response text where retain_content is full")
+    r.add_argument("--out", help="output file (default: ./audit-review-<time>.log, '-' for stdout)")
+    an = asub.add_parser("anchor", help="export the current head hash for off-box storage")
+    an.add_argument("--out")
+    ca = asub.add_parser("check-anchor", help="confirm the chain still passes through an anchor")
+    ca.add_argument("file")
+    cr = asub.add_parser("check-report", help="confirm a saved review log was not edited")
+    cr.add_argument("file")
+    asub.add_parser("permissions", help="apply 2750/0640 to the audit directory and files")
+    asub.add_parser("verify", help="recompute the hash chain (same as `palisade verify`)")
     args = ap.parse_args(argv)
     return {"install": cmd_install, "run": cmd_run, "doctor": cmd_doctor,
-            "verify": cmd_verify, "eval": cmd_eval, "benchmark": cmd_benchmark}[args.cmd](args)
+            "verify": cmd_verify, "eval": cmd_eval, "benchmark": cmd_benchmark,
+            "audit": cmd_audit}[args.cmd](args)
 
 
 if __name__ == "__main__":

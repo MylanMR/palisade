@@ -1,0 +1,45 @@
+/* Shared tokens and components for the Palisade local pages. */
+:root {
+  --paper: #ECEEF0; --panel: #FFFFFF; --ink: #1A1F26; --muted: #5B6470;
+  --rule: #D3D7DC; --soft: #F5F6F7;
+  --ok: #245C8A; --ok-bg: #E6EEF5;
+  --flag: #A8681C; --flag-bg: #F6EDE1;
+  --block: #9B3A32; --block-bg: #F4E4E2;
+  --sans: -apple-system, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --serif: Charter, "Iowan Old Style", "Bitstream Charter", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
+h1, h2, h3 { font-family: var(--serif); font-weight: 600; margin: 0; letter-spacing: 0.005em; }
+h1 { font-size: 21px; }
+h2 { font-size: 16px; }
+a { color: var(--ok); }
+code, .hash { font: 12.5px var(--mono); }
+button, .btn {
+  font: 600 13.5px var(--sans); padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--rule); background: var(--panel); color: var(--ink); text-decoration: none;
+  display: inline-block;
+}
+button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+button[disabled] { opacity: .5; cursor: default; }
+button:focus-visible, a:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus-visible, select:focus-visible {
+  outline: 2px solid var(--ok); outline-offset: 2px;
+}
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.status.ok::before { background: var(--ok); }
+.status.warn::before { background: var(--flag); }
+.status.bad::before { background: var(--block); }
+.status.ok { color: var(--ok); } .status.warn { color: var(--flag); } .status.bad { color: var(--block); }
+.notice { border-left: 3px solid var(--flag); background: var(--flag-bg); padding: 8px 10px; font-size: 13.5px; margin: 8px 0; }
+.notice.bad { border-color: var(--block); background: var(--block-bg); }
+.chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; }
+.chip.answered { color: var(--ok); } .chip.flagged { color: var(--flag); }
+.chip.blocked_input, .chip.blocked_output, .chip.block { color: var(--block); }
+.chip.flag { color: var(--flag); } .chip.allow { color: var(--muted); }
+.copy { font: 12px var(--sans); padding: 1px 6px; margin-left: 4px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
