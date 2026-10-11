@@ -425,3 +425,65 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
 
     app.state.palisade = state
     return app
+
+
+def build_setup_app(settings: dict[str, Any], problems_fn, status_path: Path) -> FastAPI:
+    """Served while an installed copy is not ready: first-run downloads in progress, or a
+    verification failure an administrator needs to see. It runs no models and exposes no
+    audit data; it reports setup progress and the problems found, behind the same
+    session-token rules as the main app. `problems_fn` returns the current problem list."""
+    from .setup import read_status
+    from . import MODE
+
+    app = FastAPI(title="Palisade setup", docs_url=None, redoc_url=None)
+    token = secrets.token_urlsafe(32)
+    require_token = settings["server"].get("require_token", True)
+    cache: dict[str, Any] = {"at": 0.0, "problems": []}
+
+    def _authed(req: Request) -> None:
+        if not require_token:
+            return
+        hdr = req.headers.get("authorization", "")
+        if hdr.startswith("Bearer ") and secrets.compare_digest(hdr[7:], token):
+            return
+        if secrets.compare_digest(req.cookies.get("palisade_token", ""), token):
+            return
+        raise HTTPException(401, "missing or invalid token")
+
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/review", response_class=HTMLResponse)
+    def page():
+        resp = HTMLResponse((WEB_DIR / "setup.html").read_text(encoding="utf-8"))
+        resp.set_cookie("palisade_token", token, httponly=True, samesite="strict")
+        return resp
+
+    STATIC = {"shared.css": "text/css", "shared.js": "application/javascript"}
+
+    @app.get("/static/{name}")
+    def static(name: str):
+        if name not in STATIC:
+            raise HTTPException(404, "not found")
+        return Response((WEB_DIR / name).read_text(encoding="utf-8"), media_type=STATIC[name],
+                        headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/setup/status")
+    def setup_status(req: Request):
+        _authed(req)
+        # Problem checks hash files, so refresh them at most every few seconds.
+        if time.time() - cache["at"] > 5:
+            cache["problems"] = [{"kind": p.kind, "message": p.message} for p in problems_fn()]
+            cache["at"] = time.time()
+        return {"mode": MODE, "setup": read_status(status_path), "problems": cache["problems"],
+                "ready": not cache["problems"]}
+
+    @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    def not_ready(rest: str, req: Request):
+        _authed(req)
+        raise HTTPException(503, "Palisade is still being set up")
+
+    @app.exception_handler(HTTPException)
+    def _http_err(_, exc: HTTPException):
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+    app.state.palisade = {"token": token}
+    return app

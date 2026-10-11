@@ -28,6 +28,7 @@ Palisade makes specific security claims. A way to break any of them is a vulnera
 - **The audit log shows tampering.** A way to alter, remove, or reorder records so that both `palisade audit verify` and `palisade audit check-anchor` (against an anchor taken beforehand) still pass.
 - **Service-mode permissions hold.** A way for the service account to modify its code, config, policy, models, or `manifest.lock`, or for an account outside `palisade-audit` to read audit data or the reviewer token, on a system installed with the provided installers.
 - **Supply-chain checks hold.** A way to get a model, model-server binary, or Python package installed that does not match its published hash or `requirements.lock`, without an error.
+- **Installers.** A way to make a released installer, or the setup job it registers, run code or trust a file that does not match its signature or published hash, or to give the service account write access to its own code, models, settings, or fingerprints.
 - **Local-only by default.** A way to make a default installation reachable from another machine, or to bypass the startup refusal to bind to a network address.
 - **Web issues.** Script injection in either page, path traversal through the static file route, or similar.
 
@@ -44,4 +45,5 @@ These are documented in the README under "What Palisade does not do." Reports ab
 
 - `docs/ARCHITECTURE.md`: request flow and threat model
 - `docs/AUDIT-REVIEW.md`: the audit chain, anchors, roles, and NIST SP 800-53 mapping
-- `docs/SERVICE-INSTALL.md`: exactly what the service installers create, and how it was verified
+- `docs/SERVICE-INSTALL.md`: exactly what each installer creates, and how it was verified
+- `packaging/SIGNING.md`: how releases are signed, and how to verify a download

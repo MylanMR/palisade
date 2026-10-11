@@ -1,0 +1,26 @@
+# Palisade first-run setup (service mode). Runs as root because the service account
+# cannot write models or manifest.lock. At each boot it exits in seconds unless
+# something is missing, such as after an install or an upgrade that changed models.yaml.
+[Unit]
+Description=Palisade setup (downloads and verifies models)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/opt/palisade/install-mode
+
+[Service]
+Type=oneshot
+User=root
+Environment=PALISADE_MODE=service
+UMask=0027
+ExecStart=/opt/palisade/bin/palisade setup --if-needed
+# A first download is about 10 GB; do not let systemd give up on it.
+TimeoutStartSec=infinity
+Nice=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/palisade /var/lib/palisade
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

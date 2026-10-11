@@ -1,0 +1,205 @@
+#!/bin/bash
+# Choose how Palisade runs on this Mac. The installer runs this for the mode you pick;
+# run it yourself later to switch.
+#
+#   sudo palisade-mode service [ADMIN_ACCOUNT]   background service account; ADMIN reviews the audit log
+#   sudo palisade-mode desktop                    run under each person's own login
+#   palisade-mode status                          show the current mode
+set -euo pipefail
+
+SVC=_palisade
+GRP=palisade-audit
+PREFIX=/opt/palisade
+BASE="/Library/Application Support/Palisade"
+CONF="$BASE/config"
+DATA="$BASE/data"
+MODEFILE=$PREFIX/install-mode
+SETUP_LABEL=com.palisade.setup
+SERVER_LABEL=com.palisade.server
+AGENT_LABEL=com.palisade.desktop
+DAEMONS=/Library/LaunchDaemons
+AGENTS=/Library/LaunchAgents
+
+say() { printf '\n==> %s\n' "$*"; }
+die() { printf 'palisade-mode: %s\n' "$*" >&2; exit 1; }
+need_root() { [ "$(id -u)" -eq 0 ] || die "run with sudo"; }
+console_user() { stat -f%Su /dev/console 2>/dev/null || true; }
+
+free_id() {   # first free id in the hidden 400-499 range: free_id Users UniqueID
+  local kind=$1 attr=$2 id
+  for id in $(seq 400 499); do
+    if ! dscl . -list "/$kind" "$attr" | awk '{print $2}' | grep -qx "$id"; then echo "$id"; return; fi
+  done
+  die "no free id in 400-499 for $kind"
+}
+
+stop_everything() {
+  launchctl bootout system/"$SERVER_LABEL" 2>/dev/null || true
+  launchctl bootout system/"$SETUP_LABEL" 2>/dev/null || true
+  for uid in $(ps -axo uid=,comm= | awk '/loginwindow/ {print $1}' | sort -u); do
+    launchctl bootout gui/"$uid"/"$AGENT_LABEL" 2>/dev/null || true
+  done
+}
+
+write_plist() {   # write_plist PATH  (content on stdin), then lint it
+  cat > "$1"
+  chown root:wheel "$1"; chmod 0644 "$1"
+  plutil -lint "$1" >/dev/null
+}
+
+service_mode() {
+  need_root
+  local admin="${1:-${SUDO_USER:-}}"
+  [ -n "$admin" ] && [ "$admin" != root ] || admin="$(console_user)"
+
+  say "Audit group and service account"
+  local gid uid
+  if dscl . -read "/Groups/$GRP" >/dev/null 2>&1; then
+    gid=$(dscl . -read "/Groups/$GRP" PrimaryGroupID | awk '{print $2}')
+  else
+    gid=$(free_id Groups PrimaryGroupID)
+    dscl . -create "/Groups/$GRP"
+    dscl . -create "/Groups/$GRP" PrimaryGroupID "$gid"
+    dscl . -create "/Groups/$GRP" RealName "Palisade audit readers"
+    dscl . -create "/Groups/$GRP" Password "*"
+  fi
+  if ! dscl . -read "/Users/$SVC" >/dev/null 2>&1; then
+    uid=$(free_id Users UniqueID)
+    dscl . -create "/Users/$SVC"
+    dscl . -create "/Users/$SVC" UniqueID "$uid"
+    dscl . -create "/Users/$SVC" PrimaryGroupID "$gid"
+    dscl . -create "/Users/$SVC" UserShell /usr/bin/false
+    dscl . -create "/Users/$SVC" NFSHomeDirectory /var/empty
+    dscl . -create "/Users/$SVC" RealName "Palisade service"
+    dscl . -create "/Users/$SVC" Password "*"
+    dscl . -create "/Users/$SVC" IsHidden 1
+  fi
+  if [ -n "$admin" ] && [ "$admin" != root ] && dseditgroup -o checkmember -m "$admin" admin >/dev/null 2>&1; then
+    dseditgroup -o edit -a "$admin" -t user "$GRP"
+    echo "reviewer: $admin (an Administrator)"
+  else
+    echo "No Administrator was added as a reviewer. Add one with:"
+    echo "  sudo dseditgroup -o edit -a ACCOUNT -t user $GRP"
+  fi
+  dscacheutil -flushcache || true
+
+  say "Folders and permissions"
+  # Root-owned, readable by the audit group. macOS gives new files their folder's group,
+  # so the lock, models, and status that the root setup job writes stay group-readable.
+  install -d -o root -g "$GRP" -m 0750 "$BASE" "$CONF" "$DATA" "$DATA/models"
+  for d in audit logs state eval compliance; do
+    install -d -o "$SVC" -g "$GRP" -m 0750 "$DATA/$d"
+    chown -R "$SVC:$GRP" "$DATA/$d"
+    find "$DATA/$d" -type f -exec chmod 0640 {} +
+  done
+  find "$CONF" "$DATA/models" -type f -exec chown root:"$GRP" {} + -exec chmod 0640 {} +
+  if [ -f "$DATA/manifest.lock" ]; then chown root:"$GRP" "$DATA/manifest.lock"; chmod 0640 "$DATA/manifest.lock"; fi
+
+  # From a 0.2.0 script install (data in /opt/palisade/data): keep the audit chain unbroken
+  # and reuse the models, which are checked against the published hashes as they are copied.
+  if [ -d "$PREFIX/data/audit" ] && ! ls "$DATA/audit"/audit-*.jsonl >/dev/null 2>&1; then
+    say "Importing the audit chain and models from $PREFIX/data"
+    PALISADE_MODE=service "$PREFIX/bin/palisade" import "$PREFIX/data" || echo "import incomplete; setup downloads what is missing"
+    chown -R "$SVC:$GRP" "$DATA/audit"; find "$DATA/audit" -type f -exec chmod 0640 {} +
+  fi
+
+  stop_everything
+  rm -f "$AGENTS/$AGENT_LABEL.plist"
+  printf 'service\n' > "$MODEFILE"; chmod 0644 "$MODEFILE"
+
+  say "launchd jobs"
+  write_plist "$DAEMONS/$SETUP_LABEL.plist" << PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$SETUP_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$PREFIX/bin/palisade</string><string>setup</string><string>--if-needed</string></array>
+  <key>EnvironmentVariables</key><dict><key>PALISADE_MODE</key><string>service</string></dict>
+  <key>UserName</key><string>root</string>
+  <key>Umask</key><integer>23</integer>
+  <key>RunAtLoad</key><true/>
+  <key>LowPriorityIO</key><true/>
+  <key>StandardOutPath</key><string>$DATA/logs/setup.log</string>
+  <key>StandardErrorPath</key><string>$DATA/logs/setup.log</string>
+</dict>
+</plist>
+PL
+  write_plist "$DAEMONS/$SERVER_LABEL.plist" << PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$SERVER_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$PREFIX/bin/palisade</string><string>run</string></array>
+  <key>EnvironmentVariables</key><dict><key>PALISADE_MODE</key><string>service</string></dict>
+  <key>UserName</key><string>$SVC</string>
+  <key>GroupName</key><string>$GRP</string>
+  <key>WorkingDirectory</key><string>$DATA</string>
+  <key>Umask</key><integer>23</integer>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$DATA/logs/palisade.log</string>
+  <key>StandardErrorPath</key><string>$DATA/logs/palisade.log</string>
+</dict>
+</plist>
+PL
+  touch "$DATA/logs/palisade.log" "$DATA/logs/setup.log"
+  chown "$SVC:$GRP" "$DATA/logs/palisade.log"; chown root:"$GRP" "$DATA/logs/setup.log"
+  chmod 0640 "$DATA/logs/palisade.log" "$DATA/logs/setup.log"
+  launchctl bootstrap system "$DAEMONS/$SETUP_LABEL.plist"
+  launchctl bootstrap system "$DAEMONS/$SERVER_LABEL.plist"
+  echo "Palisade is starting. Open http://127.0.0.1:8080/ to watch setup."
+}
+
+desktop_mode() {
+  need_root
+  stop_everything
+  rm -f "$DAEMONS/$SETUP_LABEL.plist" "$DAEMONS/$SERVER_LABEL.plist"
+  printf 'desktop\n' > "$MODEFILE"; chmod 0644 "$MODEFILE"
+  write_plist "$AGENTS/$AGENT_LABEL.plist" << PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$AGENT_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$PREFIX/bin/palisade</string><string>run</string></array>
+  <key>EnvironmentVariables</key><dict><key>PALISADE_MODE</key><string>desktop</string></dict>
+  <key>Umask</key><integer>63</integer>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+PL
+  local user uid
+  user="$(console_user)"
+  if [ -n "$user" ] && [ "$user" != root ] && [ "$user" != loginwindow ]; then
+    uid=$(id -u "$user")
+    launchctl bootstrap gui/"$uid" "$AGENTS/$AGENT_LABEL.plist" 2>/dev/null || true
+    echo "Palisade is starting for $user. Each person who logs in gets their own copy."
+  fi
+  [ -d "/Library/Application Support/Palisade/data" ] && echo "Service-mode data stays in /Library/Application Support/Palisade."
+  return 0
+}
+
+status() {
+  echo "mode: $(cat "$MODEFILE" 2>/dev/null || echo 'not chosen yet')"
+  for l in "$SETUP_LABEL" "$SERVER_LABEL"; do
+    printf '%-22s %s\n' "$l" "$(launchctl print system/$l 2>/dev/null | awk -F'= ' '/^\tstate/ {print $2; exit}' || true)"
+  done
+  [ -f "$DATA/setup-status.json" ] && grep -E '"(state|message)"' "$DATA/setup-status.json" | sed 's/^ */setup /' || true
+}
+
+case "${1:-}" in
+  service) shift; service_mode "$@" ;;
+  desktop) desktop_mode ;;
+  status)  status ;;
+  -h|--help|help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

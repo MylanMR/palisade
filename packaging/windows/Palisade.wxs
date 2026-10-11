@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Palisade MSI (WiX v7). Built by packaging/windows/build.ps1:
+    wix build Palisade.wxs -d Version=X.Y.Z -d PayloadDir=... -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext
+
+  Silent install examples:
+    msiexec /i Palisade.msi /qn                                  service mode, no reviewer added
+    msiexec /i Palisade.msi /qn PALISADE_REVIEWER="CONTOSO\mike"  service mode, mike reviews the audit log
+    msiexec /i Palisade.msi /qn PALISADE_MODE=desktop             desktop mode
+
+  The UpgradeCode never changes; it is how Windows recognizes a newer Palisade as an upgrade.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Palisade" Manufacturer="Palisade" Version="$(Version)"
+           UpgradeCode="9c695288-6e89-432b-a577-8eca24fe92ff" Scope="perMachine" Compressed="yes">
+    <SummaryInformation Description="Palisade $(Version): policy-enforced local AI assistant" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Palisade is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/MylanMR/palisade" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/MylanMR/palisade/blob/main/README.md" />
+
+    <!-- Mode: remembered across upgrades (registry), overridable on the command line. -->
+    <Property Id="PALISADE_MODE" Value="service" Secure="yes">
+      <RegistrySearch Id="PreviousMode" Root="HKLM" Key="Software\Palisade" Name="Mode" Type="raw" />
+    </Property>
+    <Property Id="PALISADE_REVIEWER" Secure="yes" />
+    <SetProperty Id="PALISADE_REVIEWER" Value="[%USERDOMAIN]\[LogonUser]" After="AppSearch" Sequence="both"
+                 Condition="NOT PALISADE_REVIEWER AND NOT UILevel=2" />
+    <Launch Condition="PALISADE_MODE=&quot;service&quot; OR PALISADE_MODE=&quot;desktop&quot;"
+            Message="PALISADE_MODE must be service or desktop." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Palisade" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- Everything build.ps1 assembled and signed: runtime, application, model server, service wrapper. -->
+    <ComponentGroup Id="Payload" Directory="INSTALLFOLDER">
+      <Files Include="$(PayloadDir)\**" />
+    </ComponentGroup>
+
+    <ComponentGroup Id="Integration" Directory="INSTALLFOLDER">
+      <Component Id="ModeRegistry">
+        <RegistryValue Root="HKLM" Key="Software\Palisade" Name="Mode" Type="string" Value="[PALISADE_MODE]" KeyPath="yes" />
+      </Component>
+      <Component Id="PathEntry">
+        <!-- `palisade` in any terminal, for administrators and reviewers. -->
+        <Environment Id="PalisadePath" Name="PATH" Value="[INSTALLFOLDER]bin" Part="last" Action="set" System="yes" Permanent="no" />
+        <RegistryValue Root="HKLM" Key="Software\Palisade" Name="PathEntry" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="StartMenu">
+        <Shortcut Id="PalisadeShortcut" Directory="ProgramMenuFolder" Name="Palisade" Description="Open Palisade"
+                  Target="[INSTALLFOLDER]runtime\pythonw.exe" Arguments="-I -m palisade open"
+                  WorkingDirectory="INSTALLFOLDER" Icon="PalisadeIcon" />
+        <RegistryValue Root="HKLM" Key="Software\Palisade" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+    <Icon Id="PalisadeIcon" SourceFile="$(PayloadDir)\runtime\pythonw.exe" />
+
+    <Feature Id="Main" Title="Palisade" Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="Payload" />
+      <ComponentGroupRef Id="Integration" />
+    </Feature>
+
+    <!--
+      Custom actions run Windows PowerShell with the signed palisade-mode.ps1 from the install folder.
+      All three are deferred and run as SYSTEM (Impersonate="no").
+        StopPalisade   before an upgrade replaces files: stops the service and any desktop copies
+        ApplyMode      after files are installed: service or desktop setup (idempotent; also on repair)
+        RemoveMode     on uninstall (not on upgrade): removes the service, task, and startup shortcut; keeps data
+    -->
+    <SetProperty Id="StopPalisade" Sequence="execute" Before="StopPalisade"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;Stop-Service Palisade -Force -ErrorAction SilentlyContinue; Get-Process -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue&quot;" />
+    <CustomAction Id="StopPalisade" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Return="ignore" Impersonate="no" />
+
+    <SetProperty Id="ApplyMode" Sequence="execute" Before="ApplyMode"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]libexec\palisade-mode.ps1&quot; -Mode [PALISADE_MODE] -Reviewer &quot;[PALISADE_REVIEWER]&quot;" />
+    <CustomAction Id="ApplyMode" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Return="check" Impersonate="no" />
+
+    <SetProperty Id="RemoveMode" Sequence="execute" Before="RemoveMode"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]libexec\palisade-mode.ps1&quot; -Mode remove" />
+    <CustomAction Id="RemoveMode" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Return="ignore" Impersonate="no" />
+
+    <InstallExecuteSequence>
+      <Custom Action="StopPalisade" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED OR Installed" />
+      <Custom Action="RemoveMode" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="ApplyMode" Before="InstallFinalize" Condition="NOT REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <!-- UI: Welcome, License, Mode, Ready. -->
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+    <UI Id="PalisadeUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Dialog Id="ModeDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="ServiceButton" Type="PushButton" X="25" Y="62" Width="100" Height="17" Default="yes" Text="&amp;Service mode">
+          <Publish Property="PALISADE_MODE" Value="service" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+        </Control>
+        <Control Id="ServiceText" Type="Text" X="45" Y="82" Width="305" Height="52" Text="Recommended when the audit log needs to stand up to review. A locked-down service account (NT SERVICE\Palisade) runs Palisade in the background and writes the audit log. Members of the Palisade Audit group, including you if you are an administrator, can read the log but not change it." />
+        <Control Id="DesktopButton" Type="PushButton" X="25" Y="144" Width="100" Height="17" Text="&amp;Desktop mode">
+          <Publish Property="PALISADE_MODE" Value="desktop" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+        </Control>
+        <Control Id="DesktopText" Type="Text" X="45" Y="164" Width="305" Height="52" Text="Palisade runs under each person's own sign-in, with their own settings and data. Simpler, and the audit log is still tamper-evident, but the person using Palisade also owns its log." />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="LicenseAgreementDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Disabled="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.SetupTypeDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}How should Palisade run?" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose who runs Palisade and who owns its audit log. You can switch later." />
+      </Dialog>
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="ModeDlg" Condition="LicenseAccepted = &quot;1&quot;" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+      <Property Id="ARPNOMODIFY" Value="1" />
+    </UI>
+    <UIRef Id="WixUI_Common" />
+  </Package>
+</Wix>

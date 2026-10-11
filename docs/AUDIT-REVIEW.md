@@ -19,7 +19,7 @@ Administrators can always reach the data with `sudo`. That is deliberate: recove
 
 ## Reviewing in the browser
 
-Open `http://127.0.0.1:8080/review` and paste the reviewer token. On a service install the token lives in `/opt/palisade/data/state/reviewer.token`; on a desktop install, in `data/state/reviewer.token`. The file is readable only by the service account and the audit group, so web review requires the same group membership as reading the files on disk.
+Open `http://127.0.0.1:8080/review` and paste the reviewer token. The token lives in `state/reviewer.token` in the data folder: `/var/lib/palisade` (Linux), `/Library/Application Support/Palisade/data` (macOS), or `C:\ProgramData\Palisade\data` (Windows) in service mode; see the README's Part 3 table for desktop mode and source checkouts. The file is readable only by the service account and the audit group, so web review requires the same group membership as reading the files on disk.
 
 The review page shows chain status, counts, and records, with filters for flagged, blocked, and answered exchanges. **Export review log** downloads the text log and saves a copy under `data/audit/reports/`. **Export anchor** downloads the current head hash. Logins, failed logins, and exports are recorded in `data/logs/review-access.log`. Ten failed logins in ten minutes locks review login for ten minutes.
 
@@ -38,7 +38,7 @@ palisade audit check-anchor anchor.json     # confirm history still passes throu
 palisade audit permissions                  # repair modes on existing audit files
 ```
 
-On a desktop install, run these as `python -m palisade ...` from the repo. On a service install, the `palisade` wrapper points at `/opt/palisade`.
+With an installed copy, `palisade` is on the PATH and uses the files of the mode chosen at install. In a source checkout, run these as `python -m palisade ...` from the repo.
 
 Message text appears in reports only when `retain_content: full` is set in `settings.yaml` and `--include-content` is passed. With the default `hashes`, a reviewer sees decisions, scores, and categories, but not what was asked.
 
@@ -54,7 +54,7 @@ An anchor is only useful if the machine cannot change it. Store anchors on anoth
 
 Palisade creates audit files with mode `0640` and audit directories with `2750` (setgid, so new files inherit the audit group on Linux), and runs with umask `027`. On a desktop install these modes still apply, but your own login account owns the files, so they protect against other local accounts only. The service install described in `docs/SERVICE-INSTALL.md` is what separates the account that writes the log from the accounts that review it.
 
-Windows does not use POSIX modes. See the Windows section of `docs/SERVICE-INSTALL.md`.
+Windows does not use POSIX modes; the installer sets equivalent folder permissions. See the Windows section of `docs/SERVICE-INSTALL.md`.
 
 ## NIST SP 800-53 mapping
 

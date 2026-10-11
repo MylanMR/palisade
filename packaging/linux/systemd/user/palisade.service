@@ -1,0 +1,14 @@
+# Palisade (desktop mode): runs under your own login with your own config and data.
+# Enable with: palisade-mode desktop   (or: systemctl --user enable --now palisade)
+[Unit]
+Description=Palisade policy-enforced local LLM (desktop mode)
+
+[Service]
+Environment=PALISADE_MODE=desktop
+UMask=0077
+ExecStart=/opt/palisade/bin/palisade run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Palisade .exe: a signed Burn bundle around Palisade.msi. It shows the MSI's own dialogs
+  (welcome, license, mode choice), so the .exe and the .msi install identically; the .exe
+  is the friendlier download for individuals, the .msi is what Intune and Group Policy deploy.
+
+  Built by build.ps1:  wix build Bundle.wxs -d Version=X.Y.Z -d MsiPath=... -ext WixToolset.BootstrapperApplications.wixext
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="Palisade" Manufacturer="Palisade" Version="$(Version)"
+          UpgradeCode="ddc4f217-1d52-4506-abec-a7877baaa8eb"
+          AboutUrl="https://github.com/MylanMR/palisade">
+    <BootstrapperApplication>
+      <bal:WixInternalUIBootstrapperApplication />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage SourceFile="$(MsiPath)" bal:PrimaryPackageType="default" />
+    </Chain>
+  </Bundle>
+</Wix>

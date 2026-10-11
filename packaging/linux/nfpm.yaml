@@ -1,0 +1,70 @@
+# nfpm builds the .deb and .rpm from one description. build.sh fills in
+# ${PALISADE_VERSION} and ${PALISADE_PAYLOAD} and runs nfpm from this folder.
+name: palisade
+arch: amd64
+platform: linux
+version: ${PALISADE_VERSION}
+release: 1
+section: utils
+priority: optional
+maintainer: Mike Mylan <michael.mylan@gmail.com>
+description: |
+  Policy-enforced local AI assistant with a tamper-evident audit log.
+  A guardian model screens every message and answer against a written policy, and
+  every exchange is recorded in a hash-chained log. Runs entirely on this machine.
+vendor: Palisade
+homepage: https://github.com/MylanMR/palisade
+license: Apache-2.0
+
+# The bundled llama.cpp server needs glibc 2.34 or newer (Ubuntu 22.04, Debian 12, RHEL 9).
+depends:
+  - libc6 (>= 2.34)
+  - libstdc++6
+  - libgcc-s1
+  - libgomp1
+recommends:
+  - libvulkan1          # GPU acceleration; without it Palisade runs on the CPU
+overrides:
+  rpm:
+    depends:
+      - glibc >= 2.34
+      - libstdc++
+      - libgcc
+      - libgomp
+    recommends:
+      - vulkan-loader
+
+contents:
+  - src: ${PALISADE_PAYLOAD}
+    dst: /opt/palisade
+    type: tree
+  - src: /opt/palisade/bin/palisade
+    dst: /usr/bin/palisade
+    type: symlink
+  - src: ./palisade-mode
+    dst: /usr/sbin/palisade-mode
+    file_info: { mode: 0755 }
+  - src: ./systemd/palisade.service
+    dst: /usr/lib/systemd/system/palisade.service
+    file_info: { mode: 0644 }
+  - src: ./systemd/palisade-setup.service
+    dst: /usr/lib/systemd/system/palisade-setup.service
+    file_info: { mode: 0644 }
+  - src: ./systemd/user/palisade.service
+    dst: /usr/lib/systemd/user/palisade.service
+    file_info: { mode: 0644 }
+  - src: ./palisade.desktop
+    dst: /usr/share/applications/palisade.desktop
+    file_info: { mode: 0644 }
+
+scripts:
+  postinstall: ./scripts/postinstall.sh
+  preremove: ./scripts/preremove.sh
+  postremove: ./scripts/postremove.sh
+
+rpm:
+  group: Applications/System
+  summary: Policy-enforced local AI assistant with a tamper-evident audit log
+  compression: zstd
+deb:
+  compression: zstd

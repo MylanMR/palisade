@@ -1,0 +1,10 @@
+#!/bin/bash
+# Command-line access for administrators: `palisade` and `palisade-mode`.
+mkdir -p /usr/local/bin
+# A 0.2.0 script install left a wrapper script here; replace it with links into the package.
+for name in palisade palisade-mode; do
+  rm -f "/usr/local/bin/$name"
+done
+ln -s /opt/palisade/bin/palisade /usr/local/bin/palisade
+ln -s /opt/palisade/libexec/palisade-mode /usr/local/bin/palisade-mode
+exit 0

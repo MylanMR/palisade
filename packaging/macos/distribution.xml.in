@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Palisade installer. build.sh fills in @VERSION@ and @ARCH@.
+     The Installation Type step lists two modes. They behave like radio buttons: each
+     choice's "selected" expression is the inverse of the other's, and Installer
+     re-evaluates both whenever one changes. For silent installs (MDM, `installer`),
+     select desktop mode with: installer -pkg Palisade.pkg -target / -applyChoiceChangesXML desktop-mode.plist -->
+<installer-gui-script minSpecVersion="2">
+    <title>Palisade @VERSION@</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <license file="LICENSE.txt"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <options customize="always" require-scripts="true" rootVolumeOnly="true" hostArchitectures="@ARCH@"/>
+    <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
+    <volume-check>
+        <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="core"/>
+        <line choice="service"/>
+        <line choice="desktop"/>
+    </choices-outline>
+    <choice id="core" title="Palisade" visible="false" enabled="false" selected="true">
+        <pkg-ref id="com.palisade.core"/>
+    </choice>
+    <choice id="service" title="Service mode"
+            description="A locked-down service account runs Palisade in the background and writes the audit log. Your administrator account can review the log but cannot change it. Choose this when the audit log needs to stand up to review."
+            start_selected="true" selected="!choices.desktop.selected">
+        <pkg-ref id="com.palisade.mode.service"/>
+    </choice>
+    <choice id="desktop" title="Desktop mode"
+            description="Palisade runs under each person's own login, with their own settings and data. Simpler, and the audit log is still tamper-evident, but the person using Palisade also owns its log."
+            start_selected="false" selected="!choices.service.selected">
+        <pkg-ref id="com.palisade.mode.desktop"/>
+    </choice>
+    <pkg-ref id="com.palisade.core" version="@VERSION@" onConclusion="none">core.pkg</pkg-ref>
+    <pkg-ref id="com.palisade.mode.service" version="@VERSION@" onConclusion="none">mode-service.pkg</pkg-ref>
+    <pkg-ref id="com.palisade.mode.desktop" version="@VERSION@" onConclusion="none">mode-desktop.pkg</pkg-ref>
+</installer-gui-script>

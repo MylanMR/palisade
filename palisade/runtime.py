@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from . import BIN_DIR, LOGS_DIR, read_lock, secure_mkdir
+from . import LOGS_DIR, read_lock, secure_mkdir, server_dir
 from .hardware import Host, threads, gpu_layers
 
 
@@ -18,7 +18,7 @@ def server_binary(host: Host) -> Path:
     if not tag:
         raise RuntimeError("manifest.lock has no llama_cpp entry; run: palisade install")
     name = "llama-server.exe" if host.os == "windows" else "llama-server"
-    p = BIN_DIR / tag / name
+    p = server_dir(tag) / name
     if not p.exists():
         raise RuntimeError(f"{p} missing; run: palisade install")
     return p
@@ -51,7 +51,8 @@ class LlamaProcess:
         env["DYLD_LIBRARY_PATH"] = str(Path(self.cmd[0]).parent)
         creationflags = 0
         if sys.platform == "win32":
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            # no console window when Palisade itself runs without one (desktop launcher, service)
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000  # CREATE_NO_WINDOW
         self.proc = subprocess.Popen(
             self.cmd, stdout=open(self.log, "ab"), stderr=subprocess.STDOUT,
             env=env, creationflags=creationflags,

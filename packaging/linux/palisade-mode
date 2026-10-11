@@ -1,0 +1,136 @@
+#!/bin/bash
+# Choose how Palisade runs on this machine.
+#
+#   sudo palisade-mode service [ADMIN_ACCOUNT]   locked-down service account; ADMIN reviews the audit log
+#   palisade-mode desktop                         run under your own login (no administrator needed)
+#   palisade-mode status                          show the current mode and service state
+#
+# Packages cannot ask questions during installation (apt and dnf run non-interactively),
+# so this is the step where you choose. See README, "Installing Palisade".
+set -euo pipefail
+
+SVC=palisade
+GRP=palisade-audit
+PREFIX=/opt/palisade
+CONF=/etc/palisade
+DATA=/var/lib/palisade
+MODEFILE=$PREFIX/install-mode
+
+say() { printf '\n==> %s\n' "$*"; }
+die() { printf 'palisade-mode: %s\n' "$*" >&2; exit 1; }
+have_systemd() { [ -d /run/systemd/system ]; }
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+status() {
+  echo "mode: $(cat "$MODEFILE" 2>/dev/null || echo 'not chosen yet')"
+  if have_systemd; then
+    for u in palisade-setup palisade; do
+      printf '%-16s %s\n' "$u" "$(systemctl is-active $u.service 2>/dev/null || true)"
+    done
+  fi
+  [ -f "$DATA/setup-status.json" ] && grep -E '"(state|message)"' "$DATA/setup-status.json" | sed 's/^ */setup /' || true
+}
+
+service_mode() {
+  [ "$(id -u)" -eq 0 ] || die "service mode needs root: sudo palisade-mode service <your-admin-account>"
+  local admin="${1:-${SUDO_USER:-}}"
+  [ -n "$admin" ] && [ "$admin" != root ] || die "name the administrator who will review the audit log: sudo palisade-mode service <account>"
+  id "$admin" >/dev/null 2>&1 || die "account '$admin' does not exist"
+  id -nG "$admin" | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin' \
+    || die "'$admin' is not an administrator (not in sudo, wheel, or admin). The reviewing account must be one."
+
+  say "Service account '$SVC' and audit group '$GRP'"
+  getent group "$GRP" >/dev/null || groupadd --system "$GRP"
+  if ! id "$SVC" >/dev/null 2>&1; then
+    useradd --system --gid "$GRP" --home-dir /nonexistent --no-create-home \
+            --shell /usr/sbin/nologin --comment "Palisade service" "$SVC"
+  fi
+  for g in render video; do           # GPU device access for the Vulkan backend
+    if getent group "$g" >/dev/null; then usermod -aG "$g" "$SVC"; fi
+  done
+  usermod -aG "$GRP" "$admin"
+  echo "service: $SVC   audit group: $GRP   reviewer: $admin"
+
+  say "Folders and permissions"
+  # Config and data roots: root-owned, readable by the audit group. The setgid bit makes
+  # files that the root setup job creates (lock, models, status) inherit the group.
+  install -d -o root -g "$GRP" -m 2750 "$CONF" "$DATA" "$DATA/models"
+  for d in audit logs state eval compliance; do
+    install -d -o "$SVC" -g "$GRP" -m 2750 "$DATA/$d"
+    chown -R "$SVC:$GRP" "$DATA/$d"
+    find "$DATA/$d" -type f -exec chmod 0640 {} +
+  done
+  find "$CONF" "$DATA/models" -maxdepth 2 -type f -exec chown root:"$GRP" {} + -exec chmod 0640 {} +
+  [ -f "$DATA/manifest.lock" ] && chown root:"$GRP" "$DATA/manifest.lock" && chmod 0640 "$DATA/manifest.lock"
+
+  # Coming from a 0.2.0 script install, which kept data in /opt/palisade/data: carry the
+  # audit chain over unbroken and reuse the models (verified) instead of downloading them.
+  if [ -d "$PREFIX/data/audit" ] && ! ls "$DATA/audit"/audit-*.jsonl >/dev/null 2>&1; then
+    say "Importing the audit chain and models from $PREFIX/data"
+    PALISADE_MODE=service "$PREFIX/bin/palisade" import "$PREFIX/data" || echo "import incomplete; setup will download what is missing"
+    chown -R "$SVC:$GRP" "$DATA/audit"; find "$DATA/audit" -type f -exec chmod 0640 {} +
+  fi
+
+  # A 0.2.0 script install left its own unit and command wrapper. /etc and /usr/local take
+  # precedence over the package's copies, so retire them (kept as *.0.2.0 for reference).
+  for f in /etc/systemd/system/palisade.service /usr/local/bin/palisade; do
+    if [ -f "$f" ] && grep -q 'PALISADE_DATA=/opt/palisade/data' "$f"; then
+      mv "$f" "$f.0.2.0"; echo "retired the 0.2.0 script install's $f"
+    fi
+  done
+
+  printf 'service\n' > "$MODEFILE"; chmod 0644 "$MODEFILE"
+
+  if have_systemd; then
+    say "Starting the setup job and the service"
+    systemctl daemon-reload
+    systemctl enable palisade-setup.service palisade.service
+    systemctl start --no-block palisade-setup.service
+    systemctl restart palisade.service
+  else
+    echo "systemd is not running here; start later with: systemctl enable --now palisade-setup palisade"
+  fi
+
+  if have_systemd; then
+    echo; echo "Palisade is running as a service. Open http://127.0.0.1:8080/ to watch setup"
+    echo "download the models (about 10 GB), then use the assistant."
+  fi
+  cat << DONE
+
+Log out and back in as $admin so the audit group applies, then confirm:
+  palisade audit verify              works without sudo
+  cat $DATA/state/reviewer.token     works without sudo (needed for the review page)
+  touch $DATA/audit/test             fails with "Permission denied", as it should
+DONE
+}
+
+desktop_mode() {
+  if [ "$(id -u)" -eq 0 ]; then
+    if have_systemd && systemctl is-enabled palisade.service >/dev/null 2>&1; then
+      say "Stopping service mode"
+      systemctl disable --now palisade.service palisade-setup.service || true
+      echo "Service-mode data stays in $DATA."
+    fi
+    printf 'desktop\n' > "$MODEFILE"; chmod 0644 "$MODEFILE"
+    echo "Desktop mode chosen. Each person now runs 'palisade-mode desktop' (without sudo) or opens Palisade from their applications menu."
+    return
+  fi
+  [ "$(cat "$MODEFILE" 2>/dev/null)" = service ] && die "this machine runs Palisade as a service; an administrator can switch with: sudo palisade-mode desktop"
+  if systemctl --user show-environment >/dev/null 2>&1; then
+    systemctl --user daemon-reload
+    systemctl --user enable --now palisade.service
+    echo "Palisade starts when you log in. Open it from your applications menu or with: palisade open"
+  else
+    echo "No user service manager here; start Palisade with: palisade open"
+  fi
+  echo "Coming from a source checkout? Reuse its models and audit chain with: palisade import ~/palisade/data"
+}
+
+case "${1:-}" in
+  service) shift; service_mode "$@" ;;
+  desktop) desktop_mode ;;
+  status)  status ;;
+  -h|--help|help) usage 0 ;;
+  *) usage 1 ;;
+esac

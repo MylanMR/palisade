@@ -11,6 +11,9 @@
   python -m palisade audit check-anchor FILE
   python -m palisade audit check-report FILE
   python -m palisade audit permissions
+  python -m palisade setup [--if-needed]          (installed copies: first-run downloads)
+  python -m palisade open [--no-browser]          (installed copies: start if needed, open the page)
+  python -m palisade import FOLDER                (reuse models and audit chain from a source checkout)
 """
 from __future__ import annotations
 
@@ -23,12 +26,24 @@ from pathlib import Path
 
 import os
 
-from . import (ROOT, DATA_DIR, STATE_DIR, POSIX, __version__, load_settings, load_models,
-               read_lock, manifest_hash, audit_dir, secure_write_text)
+from . import (ROOT, DATA_DIR, STATE_DIR, LOGS_DIR, POSIX, MODE, PACKAGED, SETUP_STATUS, __version__,
+               load_settings, load_models, read_lock, manifest_hash, audit_dir, secure_write_text,
+               secure_mkdir, ensure_config, load_yaml, CONFIG_DIR)
 from .audit import AuditLog
-from .fetch import (install_binaries, install_model, model_path,
+from .fetch import (install_binaries, install_model, model_path, installation_problems,
                     record_config_hashes, verify_installation)
 from .hardware import detect, choose_tier
+
+
+def _settings_for_startup() -> dict:
+    """Settings for deciding how to start. A service can start before its setup job has
+    written the config folder; until then it uses the package defaults, which only
+    matter for the setup page (address, port, token)."""
+    if MODE == "desktop":
+        ensure_config()
+    if (CONFIG_DIR / "settings.yaml").exists():
+        return load_settings()
+    return load_yaml(ROOT / "config" / "settings.yaml")
 
 
 def _tier(settings, manifest, override=None):
@@ -54,6 +69,17 @@ def cmd_doctor(args):
 
 
 def cmd_install(args):
+    if PACKAGED:
+        # Installed copies: models come from first-run setup. Running `install` by hand is
+        # the explicit way to record intended changes to settings or policy.
+        from .setup import run_setup, Status
+        rc = run_setup(Status(), tier_override=args.tier)
+        if rc == 0:
+            lock = record_config_hashes()
+            print(f"recorded current settings and policy; manifest hash {manifest_hash(lock)}")
+        else:
+            print(f"setup did not complete; see {SETUP_STATUS}")
+        return rc
     settings, manifest = load_settings(), load_models()
     host, tier = _tier(settings, manifest, args.tier)
     print(f"host: {host.os}/{host.arch} ram={host.ram_gb:.0f}GB gpu={host.gpu} backend={host.backend}")
@@ -106,7 +132,7 @@ def cmd_run(args):
     import uvicorn
     from .server import build_app
 
-    settings, manifest = load_settings(), load_models()
+    settings, manifest = _settings_for_startup(), load_models()
     from .exposure import check_exposure
     errors, warnings = check_exposure(settings)
     if errors:
@@ -116,16 +142,21 @@ def cmd_run(args):
         return 1
     for w in warnings:
         print(w + "\n")
-    host, tier = _tier(settings, manifest)
-    problems = verify_installation(manifest, tier)
-    if problems:
-        print("refusing to start; installation does not match manifest.lock:")
-        for p in problems:
-            print(f"  - {p}")
-        return 1
-
     if POSIX:
         os.umask(0o027)  # anything Palisade creates: no access for other accounts
+    host, tier = _tier(settings, manifest)
+    problems = installation_problems(manifest, tier) if (CONFIG_DIR / "settings.yaml").exists() else ["config"]
+    if problems:
+        if MODE == "source":
+            print("refusing to start; installation does not match manifest.lock:")
+            for p in problems:
+                print(f"  - {p}")
+            return 1
+        if _wait_for_setup(settings) != 0:
+            return 1
+        settings, manifest = load_settings(), load_models()
+        host, tier = _tier(settings, manifest)
+
     base, guard, guardian, t = _start_stack(settings, manifest, host, tier)
     audit = AuditLog(audit_dir(settings), settings["audit"].get("rotate_mb", 64))
     app = build_app(settings, base.url, guardian, t["base"], audit,
@@ -148,6 +179,131 @@ def cmd_run(args):
     finally:
         base.stop(); guard.stop()
     return 0
+
+
+def _wait_for_setup(settings) -> int:
+    """Serve the setup page until the installation verifies, then return so `run`
+    continues into a normal start. In desktop mode Palisade runs setup itself; in
+    service mode a separate root/SYSTEM job does, because the service account cannot
+    write models or manifest.lock."""
+    import subprocess
+    import threading
+    import uvicorn
+    from .server import build_setup_app
+    from .fetch import Problem
+
+    def problems():
+        try:
+            if not (CONFIG_DIR / "settings.yaml").exists():
+                return [Problem("missing", "settings not yet created")]
+            st, mf = load_settings(), load_models()
+            return installation_problems(mf, _tier(st, mf)[1])
+        except Exception as e:      # half-written config during setup: keep waiting
+            return [Problem("missing", f"waiting for setup ({e})")]
+
+    initial = problems()
+    child = None
+    if MODE == "desktop" and not any(p.kind == "mismatch" for p in initial):
+        secure_mkdir(LOGS_DIR)
+        log = open(LOGS_DIR / "setup.log", "ab")
+        child = subprocess.Popen([sys.executable, "-m", "palisade", "setup"], stdout=log, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, **_no_window())
+
+    app = build_setup_app(settings, problems, SETUP_STATUS)
+    s = settings["server"]
+    server = uvicorn.Server(uvicorn.Config(app, host=s["host"], port=int(s["port"]), log_level="warning"))
+    print(f"Palisade is not set up yet; progress at http://{s['host']}:{s['port']}/")
+    for p in initial:
+        print(f"  - {p}")
+
+    def watch():
+        while not server.should_exit:
+            time.sleep(3)
+            if not problems():
+                time.sleep(2)            # let the page show "Ready" before the switch
+                server.should_exit = True
+    threading.Thread(target=watch, daemon=True).start()
+    server.run()
+    if child is not None and child.poll() is None:
+        child.wait()
+    if problems():
+        return 1                         # stopped by a signal, not by setup finishing
+    print("setup complete; starting")
+    return 0
+
+
+def _no_window() -> dict:
+    """Keyword arguments that keep a child process from opening a console window on Windows."""
+    if os.name == "nt":
+        return {"creationflags": 0x08000000}   # CREATE_NO_WINDOW
+    return {}
+
+
+def cmd_setup(args):
+    from .setup import run_setup, Status
+    if MODE == "source":
+        print("setup is for installed copies; in a source checkout use `palisade install`")
+        return 1
+    if POSIX:
+        os.umask(0o027)
+    rc = run_setup(Status(), tier_override=args.tier, only_if_needed=args.if_needed)
+    from .setup import read_status
+    st = read_status()
+    print(f"setup: {st.get('state')} {st.get('message', '')}")
+    for p in st.get("problems", []):
+        print(f"  - {p}")
+    return rc
+
+
+def cmd_import(args):
+    from .setup import import_existing
+    src = Path(args.folder).expanduser()
+    if not (src / "models").is_dir() and not (src / "audit").is_dir():
+        print(f"{src} has no models/ or audit/ folder; point at the data folder of a source checkout")
+        return 1
+    ensure_config()          # no-op in a source checkout
+    for line in import_existing(src):
+        print(f"  - {line}")
+    return 0
+
+
+def cmd_open(args):
+    """Open Palisade in the browser, starting it first in desktop mode if it is not running."""
+    import subprocess
+    import webbrowser
+    import httpx
+    settings = _settings_for_startup()
+    s = settings["server"]
+    url = f"http://{s['host']}:{s['port']}/"
+
+    def up() -> bool:
+        try:
+            return httpx.get(url, timeout=2).status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    if not up():
+        if MODE == "service":
+            print(f"Palisade is not answering at {url}. The service may still be starting; "
+                  f"check it with your system's service manager.")
+        else:
+            secure_mkdir(LOGS_DIR)
+            log = open(LOGS_DIR / "palisade.log", "ab")
+            exe = sys.executable
+            if os.name == "nt" and exe.lower().endswith("python.exe"):
+                exe = exe[:-10] + "pythonw.exe"
+            kw = _no_window() if os.name == "nt" else {"start_new_session": True}
+            if os.name == "nt":
+                kw["creationflags"] = kw.get("creationflags", 0) | 0x00000200 | 0x00000008  # NEW_GROUP, DETACHED
+            subprocess.Popen([exe, "-m", "palisade", "run"], stdout=log, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, close_fds=True, **kw)
+            for _ in range(60):
+                if up():
+                    break
+                time.sleep(1)
+    if not args.no_browser:
+        webbrowser.open(url)
+    return 0 if up() else 1
 
 
 def cmd_eval(args):
@@ -295,6 +451,13 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("install"); p.add_argument("--tier"); p.add_argument("--model-url", action="append")
     sub.add_parser("run"); sub.add_parser("doctor"); sub.add_parser("verify")
+    sp = sub.add_parser("setup", help="installed copies: download models and record fingerprints")
+    sp.add_argument("--tier"); sp.add_argument("--if-needed", action="store_true",
+                                               help="exit quickly when nothing is missing (boot-time job)")
+    op = sub.add_parser("open", help="installed copies: start Palisade if needed and open it in a browser")
+    op.add_argument("--no-browser", action="store_true")
+    ip = sub.add_parser("import", help="reuse models and the audit chain from a source checkout's data folder")
+    ip.add_argument("folder")
     e = sub.add_parser("eval"); e.add_argument("--cases", default=str(ROOT / "eval" / "cases.jsonl"))
     sub.add_parser("benchmark")
     ph = sub.add_parser("publish-hashes", help="write verified fingerprints from manifest.lock into models.yaml")
@@ -315,9 +478,12 @@ def main(argv=None):
     asub.add_parser("permissions", help="apply 2750/0640 to the audit directory and files")
     asub.add_parser("verify", help="recompute the hash chain (same as `palisade verify`)")
     args = ap.parse_args(argv)
+    if MODE == "desktop":
+        ensure_config()      # a person's first command creates their config from the defaults
     return {"install": cmd_install, "run": cmd_run, "doctor": cmd_doctor,
             "verify": cmd_verify, "eval": cmd_eval, "benchmark": cmd_benchmark,
-            "audit": cmd_audit, "publish-hashes": cmd_publish_hashes}[args.cmd](args)
+            "audit": cmd_audit, "publish-hashes": cmd_publish_hashes,
+            "setup": cmd_setup, "open": cmd_open, "import": cmd_import}[args.cmd](args)
 
 
 if __name__ == "__main__":

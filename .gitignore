@@ -15,3 +15,7 @@ config/policy.local.yaml
 # OS
 .DS_Store
 Thumbs.db
+
+# installer build output
+build/
+dist/

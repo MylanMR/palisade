@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+Installers for macOS, Windows, and Linux.
+
+- **Installers.** A signed and notarized `.pkg` in a `.dmg` for Apple Silicon Macs; a signed `.msi` and `.exe` for Windows; `.deb` and `.rpm` packages for Linux. Each bundles a pinned Python runtime, Palisade, and a signed llama.cpp model server, so nothing else needs to be installed. The release workflow builds them on GitHub's runners, installs each on a clean machine to test it, signs everything inside and out, and publishes a draft release with checksums and build-provenance attestations. See `packaging/SIGNING.md`.
+- **Mode chosen at install.** Service mode or desktop mode, chosen on an installer page (macOS, Windows) or with `palisade-mode` (Linux), and switchable later. Silent installs select it with an Installer choices file (macOS) or `PALISADE_MODE` (Windows).
+- **First-run setup.** Models download the first time Palisade starts, with a progress page in the browser. Downloads resume after interruptions and are checked against published hashes before anything is recorded. In service mode a root (or SYSTEM) setup job does this, because the service account cannot write models or fingerprints; it exits in seconds at later startups. A file that differs from its recorded or published hash is reported on the page and never re-trusted automatically.
+- **Windows service mode.** Runs as the virtual account `NT SERVICE\Palisade`, with a **Palisade Audit** group for reviewers and folder permissions equivalent to the macOS and Linux installs.
+- **Published hashes.** `models.yaml` now carries SHA-256 values for the default models, every llama.cpp release archive, and the server binary on each platform. The release workflow refuses to ship unless the model hashes match what Hugging Face publishes (`packaging/hf_hashes.py`).
+- **Whole model-server check.** `manifest.lock` records every file in the model-server folder, including the GPU and CPU backend libraries it loads, and startup checks them all. Installs keep only the server and the libraries it needs, dropping about twenty unused tools from the release archives.
+- **Safer extraction.** Release archives are extracted with checks that reject absolute paths, `..`, and links that point outside the target folder, including on Python versions without tarfile's data filter.
+- **New commands.** `palisade open`, `palisade setup`, `palisade import` (reuse models and the audit chain from a source checkout), and `palisade-mode`.
+- **Optional Hugging Face token** for models that require one, sent only to Hugging Face and never forwarded to the storage servers it redirects to.
+- The 0.2.0 service scripts are replaced by the installers. Choosing service mode imports a 0.2.0 install's audit chain and models.
+- README rewritten around the installers. `docs/SERVICE-INSTALL.md` lists what each installer creates.
+- 33 new tests (87 total), passing on Python 3.9 and 3.13.
+
 ## 0.2.1
 
 Secure defaults for anyone installing from the repository.

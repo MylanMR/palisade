@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Palisade
+Comment=Policy-enforced local AI assistant
+Exec=/opt/palisade/bin/palisade open
+Terminal=false
+Categories=Utility;

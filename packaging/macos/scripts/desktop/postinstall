@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /opt/palisade/libexec/palisade-mode desktop

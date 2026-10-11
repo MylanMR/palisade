@@ -4,10 +4,14 @@
 # ships under a license that permits local use and fine-tuning. Chinese-origin models
 # are deliberately excluded. See docs/MODELS.md for the reasoning and the tradeoffs.
 #
-# VERIFY markers: Hugging Face repository and file names for GGUF conversions change
-# between quantizer releases. Confirm each one before first install. After the first
-# successful pull, `palisade install` records the SHA-256 in manifest.lock and every
-# later run refuses to start if a file on disk no longer matches.
+# Published hashes: a `sha256:` line on a model, and the archive_sha256 / server_sha256
+# tables below, are checked before anything is trusted; a download that differs is
+# rejected. Entries without one are trusted on first download (Palisade says so).
+# After installation, manifest.lock records every file's SHA-256 and each start refuses
+# to run if a file on disk no longer matches. Release builds refuse to ship unless every
+# default model's hash matches the one Hugging Face publishes (packaging/hf_hashes.py).
+#
+# VERIFY markers: repositories not yet confirmed. Confirm one before using that model.
 
 llama_cpp:
   # Pinned llama.cpp release build. Bump deliberately; the tag is part of the audit manifest.
@@ -25,6 +29,25 @@ llama_cpp:
     windows-x64-cuda:       llama-{tag}-bin-win-cuda-12.4-x64.zip
   extra_assets:
     windows-x64-cuda:       cudart-llama-bin-win-cuda-12.4-x64.zip   # CUDA runtime DLLs
+  # SHA-256 of each release archive, checked before extraction. Recorded 10 Oct 2026 from
+  # downloads of the b10830 release; the macos-arm64 server hash also matches an
+  # independent install made in September 2026.
+  archive_sha256:
+    macos-arm64: 1a9359b3fe59a1345bac65323c43dfcf1c70ec0bd746afa09b29020ba0c33151
+    macos-x64: f477f9550fb3ef617838e45c49ee6a5e205713b5f878872daa435a90c74d0e5b
+    linux-x64-cpu: 6eec0a94300391555504a647599bc7a248ee9cee4e63210025e7f59820352d9e
+    linux-x64-vulkan: cce7f5469313d98f2aee7aea508e50ac640b424fd5fb29e168c9e9f461071072
+    windows-x64-cpu: 2bdf856e95d4070ccb9052322f8598b9deb08fe2b4a6870740231fb375388039
+    windows-x64-vulkan: 732aa8999056d1694af2ec3ff61f1a60e2e56b2a5310eb765185909623e0f56f
+  # Published hashes of the extracted llama-server binary, per platform. The CPU and
+  # Vulkan builds ship the same server; GPU support lives in separately loaded libraries.
+  server_sha256:
+    macos-arm64: d707b6db4c1397a7383176fba12d339e5b33c7513669d74c8fbc2a76f6979a72
+    macos-x64: 6a8e01dc4a888709308eb30fe8aad78b238ee90c10fd48705c1e2d6113e6f1a7
+    linux-x64-cpu: a23b84ab27afb203cf37eb754b26a7feab69531e50036e0231f3e710d335df25
+    linux-x64-vulkan: a23b84ab27afb203cf37eb754b26a7feab69531e50036e0231f3e710d335df25
+    windows-x64-cpu: 0b6d3e9968f173c52cdae36e9927679a28fa3f22f45c43c357fdfe2027346f62
+    windows-x64-vulkan: 0b6d3e9968f173c52cdae36e9927679a28fa3f22f45c43c357fdfe2027346f62
 
 hf_base_url: https://huggingface.co
 
@@ -49,9 +72,10 @@ models:
     role: base
     lab: Google DeepMind (US)
     license: Apache-2.0
-    repo: VERIFY/gemma-4-E4B-it-GGUF
+    repo: lmstudio-community/gemma-4-E4B-it-GGUF
     file: gemma-4-E4B-it-Q4_K_M.gguf
-    approx_gb: 3.0
+    # No published hash yet: run packaging/hf_hashes.py --write where huggingface.co is reachable.
+    approx_gb: 5.3
     notes: Best fit for CPU-only 16 GB machines.
 
   gemma4-12b:
@@ -60,7 +84,9 @@ models:
     license: Apache-2.0
     repo: lmstudio-community/gemma-4-12B-it-GGUF
     file: gemma-4-12B-it-Q4_K_M.gguf
-    approx_gb: 7.5
+    # Recorded from a maintainer's verified install; release CI confirms it against Hugging Face.
+    sha256: 95d83ba36642b1f385fb906b5962a71763361be3bac930a709945f72d97473f8
+    approx_gb: 7.4
     notes: Dense model; takes LoRA style adapters cleanly. Slow on CPU, fine with any GPU.
 
   olmo3-7b:
@@ -79,7 +105,9 @@ models:
     license: Gemma Terms of Use
     repo: mradermacher/shieldgemma-2b-GGUF
     file: shieldgemma-2b.Q8_0.gguf
-    approx_gb: 2.7
+    # Recorded from a maintainer's verified install; release CI confirms it against Hugging Face.
+    sha256: f68e30dce9c5cfa7b2e4799c7a3feffe1263c57c2fa204f263b00e98635433e3
+    approx_gb: 2.8
     adapter: yes_no
     positive_token: "Yes"
     negative_token: "No"

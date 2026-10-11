@@ -7,14 +7,14 @@ Palisade runs an AI assistant entirely on your own computer, with two protection
 
 Nothing leaves your machine after setup. The models come from US-based labs under licenses that allow local use.
 
-This guide takes you from a fresh download to a running system, then shows how to set up a separate account for the audit log and how to review it.
+This guide takes you from a download to a running system, explains the separate account that keeps the audit log honest, and shows how to review the log.
 
 **Contents**
 
 - [Before you start](#before-you-start)
-- [Part 1: Install and run Palisade](#part-1-install-and-run-palisade)
+- [Part 1: Install Palisade](#part-1-install-palisade)
 - [Part 2: Using Palisade](#part-2-using-palisade)
-- [Part 3: Set up the audit log service account](#part-3-set-up-the-audit-log-service-account)
+- [Part 3: The audit log service account](#part-3-the-audit-log-service-account)
 - [Part 4: Audit log procedures](#part-4-audit-log-procedures)
 - [Command reference](#command-reference)
 - [Troubleshooting](#troubleshooting)
@@ -33,134 +33,98 @@ This guide takes you from a fresh download to a running system, then shows how t
 | An NVIDIA graphics card with 8 GB of memory or more | Gemma 4 12B | ShieldGemma 2B |
 | Anything else with at least 16 GB of memory | Gemma 4 E4B | ShieldGemma 2B |
 
-Apple Silicon Macs qualify at 16 GB because the GPU shares the computer's memory. Palisade measures graphics memory only on NVIDIA cards, so a machine with an AMD or Intel card is placed by its system memory. To override the choice, set `tier: small` or `tier: standard` in `config/settings.yaml`.
+Apple Silicon Macs qualify at 16 GB because the GPU shares the computer's memory. Palisade measures graphics memory only on NVIDIA cards, so a machine with an AMD or Intel card is placed by its system memory. To override the choice, set `tier: small` or `tier: standard` in Palisade's `settings.yaml`.
 
-Apple Silicon Macs use the built-in GPU automatically. Windows and Linux machines with an NVIDIA, AMD, or Intel graphics card use it automatically. Machines without one run on the processor, which works but answers slowly (often 20 seconds or more).
+Apple Silicon Macs use the built-in GPU automatically. Windows and Linux machines with an NVIDIA, AMD, or Intel graphics card use it automatically through Vulkan. Machines without one run on the processor, which works but answers slowly (often 20 seconds or more).
 
-**Operating system.** macOS, Linux, or Windows 10/11.
+**Operating system.** macOS 13 or newer on Apple Silicon; Windows 10 or 11 (64-bit); or Linux with glibc 2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 36, RHEL 9, or later).
 
-**Software.** Python 3.9 or newer, and Git (optional; you can download a ZIP instead).
+**Two ways to run Palisade.** The installer asks which one you want, and you can switch later.
 
-**An account at huggingface.co.** Free. This is where the models are downloaded from.
-
-**Two ways to run Palisade.** You'll start with the first and can move to the second later.
-
-- **Desktop mode** runs under your own login. It's the quickest way to try Palisade, and the audit log is still tamper-evident. Parts 1 and 2 cover it.
-- **Service mode** runs Palisade under a separate, locked-down account. That account writes the audit log; your administrator account can read it but cannot change it without `sudo`. Use this when the audit log needs to stand up to review. Part 3 covers it.
+- **Service mode** runs Palisade in the background under a separate, locked-down account. That account writes the audit log; your administrator account can read it but cannot change it without elevating (`sudo`, or an elevated Windows session), which the operating system records. Choose this when the audit log needs to stand up to review. Part 3 explains it in detail.
+- **Desktop mode** runs Palisade under each person's own login, with their own settings and data. It is simpler, and the audit log is still tamper-evident, but the person using Palisade also owns its log.
 
 ---
 
-## Part 1: Install and run Palisade
+## Part 1: Install Palisade
 
-All commands go in a terminal: **Terminal** on macOS, your terminal app on Linux, or **PowerShell** on Windows.
+### Option A: Use the installer (recommended)
 
-### Step 1. Get the code
+The installers include everything Palisade needs: its own copy of Python, the application, and the model server. Each one is small (under 100 MB). The models, about 10 GB, download the first time Palisade starts, and each is checked against the fingerprint published with the release before it is used.
 
-```
-git clone https://github.com/MylanMR/palisade.git
-cd palisade
-```
+1. **Download the installer** for your computer from the repository's **Releases** page:
 
-Without Git, download the ZIP from the GitHub page, unzip it, and `cd` into the `palisade` folder. Every command in this guide assumes you are in that folder. You can confirm with `ls`, which should list `README.md`, `config`, `palisade`, and `scripts`.
+   | Computer | File |
+   |---|---|
+   | Mac with Apple Silicon | `Palisade-<version>-macos-arm64.dmg` |
+   | Windows | `Palisade-<version>-windows-x64.exe` (or the `.msi` for managed deployment) |
+   | Ubuntu, Debian | `palisade_<version>-1_amd64.deb` |
+   | Fedora, RHEL | `palisade-<version>-1.x86_64.rpm` |
 
-### Step 2. Check Python
-
-```
-python3 --version
-```
-
-You should see `Python 3.9` or higher. The version Apple includes with its Command Line Tools (3.9) works. Python 3.9 no longer receives security updates from the Python project, and several of Palisade's dependencies have stopped releasing new versions for it, so a newer Python (from python.org or Homebrew) is the better long-term choice. If you get "command not found," install Python from python.org (or `brew install python` on a Mac with Homebrew) and open a new terminal window.
-
-On Windows, use `py --version` instead.
-
-### Step 3. Sign in to Hugging Face
-
-The models are hosted on Hugging Face, and some require you to accept the publisher's terms before downloading.
-
-1. Create a free account at **huggingface.co** and sign in.
-2. Visit each model page listed in Step 4 (for example `huggingface.co/lmstudio-community/gemma-4-12B-it-GGUF`). If a page asks you to agree to terms, agree.
-3. Go to **huggingface.co/settings/tokens**, create a token with **Read** access, and copy it.
-4. In your terminal, install the Hugging Face tools and sign in:
+2. **Check the download** (optional, recommended). Every release includes `SHA256SUMS` and a build-provenance attestation that ties each file to the GitHub workflow run that built it:
 
    ```
-   python3 -m pip install -U huggingface_hub
-   python3 -c "from huggingface_hub import login; login()"
+   shasum -a 256 -c SHA256SUMS --ignore-missing          # macOS (sha256sum on Linux)
+   gh attestation verify FILE -R MylanMR/palisade         # any platform with the GitHub CLI
    ```
 
-   Paste the token when asked. Nothing appears on screen while you paste; that is normal. Press Enter. When asked "Add token as git credential?", answer `n`.
+   On Windows, `Get-FileHash .\Palisade-<version>-windows-x64.exe` prints the hash to compare with `SHA256SUMS`.
 
-5. Confirm it worked:
+3. **Run the installer.**
+
+   - **macOS:** open the `.dmg`, then open `Palisade-<version>-macos-arm64.pkg`. On the **Installation Type** step, choose **Service mode** or **Desktop mode**. Enter your password when asked.
+   - **Windows:** run the `.exe`. On the **How should Palisade run?** page, choose **Service mode** or **Desktop mode**. Approve the administrator prompt.
+   - **Linux:** install the package, then choose the mode. Linux package managers do not ask questions during installation, so choosing is a separate command:
+
+     ```
+     sudo apt install ./palisade_<version>-1_amd64.deb      # Ubuntu, Debian
+     sudo dnf install ./palisade-<version>-1.x86_64.rpm      # Fedora, RHEL
+
+     sudo palisade-mode service YOUR-ADMIN-ACCOUNT           # service mode
+     palisade-mode desktop                                   # or desktop mode, as yourself
+     ```
+
+   In service mode, the account that runs the installer becomes the audit log reviewer if it is an administrator. Part 3 lists exactly what the installer creates.
+
+4. **Open Palisade.** Use **Palisade** in Applications (macOS), the Start menu (Windows), or your applications menu (Linux), or go to **http://127.0.0.1:8080/** in a browser. This address only works on your own computer; nothing is reachable from your network.
+
+5. **Wait for setup.** The first time, the page shows setup progress while the models download. Downloads resume where they stopped if the connection drops. When both models are verified, the page switches to Palisade on its own.
+
+Palisade then starts automatically: at boot in service mode, at sign-in in desktop mode.
+
+**No Hugging Face account is needed** for the default models. If you switch to a model that requires one, see "Download fails with 401, 403, or gated" under Troubleshooting.
+
+**Coming from a source checkout** (such as an earlier `git clone` install)? Reuse its models and audit chain so nothing downloads twice and the audit history continues unbroken. In desktop mode: `palisade import ~/palisade/data`. In service mode, the installer does this for a 0.2.0 service install automatically; otherwise run `sudo palisade import ~/palisade/data` (on Windows, in an elevated terminal). Models are checked against the published fingerprints as they are copied, and the audit chain is copied only into an empty audit folder.
+
+### Option B: Run from source (developers)
+
+All commands go in a terminal: **Terminal** on macOS, your terminal app on Linux, or **PowerShell** on Windows. You need Python 3.9 or newer and Git.
+
+1. **Get the code:**
 
    ```
-   python3 -c "from huggingface_hub import whoami; print(whoami()['name'])"
+   git clone https://github.com/MylanMR/palisade.git
+   cd palisade
    ```
 
-   You should see your Hugging Face username. You only do this step once per computer.
+   Every command below assumes you are in that folder. `ls` should list `README.md`, `config`, `palisade`, and `scripts`.
 
-### Step 4. Check the model locations
+2. **Check Python:** `python3 --version` (on Windows, `py --version`) should print `Python 3.9` or higher. The version Apple includes with its Command Line Tools (3.9) works, but Python 3.9 no longer receives security updates, so a newer Python from python.org or Homebrew is the better long-term choice.
 
-Open `config/models.yaml` in a text editor. Find the entries for the models your machine will use (see the table in "Before you start") and make sure each has a real `repo` value rather than one starting with `VERIFY/`.
+3. **Choose a policy.** The policy decides what gets blocked, what gets flagged for review, and what is allowed. `config/policy.yaml` is the file Palisade enforces, and it starts as a copy of `config/policy.example-standard.yaml`, a broad, ready-to-use policy. `config/policy.example-blank.yaml` is a minimal skeleton for writing your own. To keep your real policy out of Git, put it in `config/policy.local.yaml`; Palisade uses that file in preference to `policy.yaml`, and Git ignores it. For your first run, leave it alone.
 
-These locations were confirmed working in September 2026:
+4. **Install and start:**
 
-| Entry in models.yaml | repo | file |
-|---|---|---|
-| `gemma4-12b` | `lmstudio-community/gemma-4-12B-it-GGUF` | `gemma-4-12B-it-Q4_K_M.gguf` |
-| `shieldgemma-2b` | `mradermacher/shieldgemma-2b-GGUF` | `shieldgemma-2b.Q8_0.gguf` |
+   ```
+   bash scripts/bootstrap.sh                                         # macOS or Linux
+   powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1    # Windows
+   ```
 
-Two things to watch:
+   This sets up a private Python environment with exact, hash-verified package versions, downloads the model server and both models, checks each against the hashes published in `config/models.yaml`, records their fingerprints, and starts Palisade. The first run downloads about 10 GB. When you see `Palisade ready: http://127.0.0.1:8080/`, open that address.
 
-- The guardian file name uses dots: `shieldgemma-2b.Q8_0.gguf`. Type it exactly.
-- Edit the block whose name matches the model. The `gemma4-12b` block needs the 12B repo; the `gemma4-e4b` block is for 16 GB machines and needs a different, smaller model. If you are on a 16 GB machine, find a current `gemma-4-E4B-it` GGUF repo on Hugging Face and fill it in.
+5. **Stop and start again.** Press `Ctrl+C` in the terminal to stop. Run `bash scripts/bootstrap.sh` again to start; it skips the downloads, checks every file against its recorded fingerprint, and starts in seconds.
 
-Why this step exists: the quantized model files are published by community members, and their locations change over time. Checking them yourself once is part of trusting what you run.
-
-If a model's block in `models.yaml` includes a `sha256:` line, Palisade checks the download against it and rejects any file that differs, before recording anything. Without that line, Palisade trusts the first download it receives and prints a note saying so. Either way, it records each file's fingerprint after installation and refuses to start if a file ever changes. To add the `sha256:` lines once your own install is working, see Procedure I in Part 4.
-
-### Step 5. Choose a policy
-
-The policy decides what gets blocked, what gets flagged for review, and what is allowed. Palisade ships with two starting points in `config/`:
-
-- `policy.example-standard.yaml`: a broad, ready-to-use policy. This is the default.
-- `policy.example-blank.yaml`: a minimal skeleton for writing your own.
-
-`config/policy.yaml` is the file Palisade actually enforces, and it starts as a copy of the standard example. To use the blank one instead, copy it over `policy.yaml`. For your first run, leave it alone.
-
-If you want to keep your real policy out of Git, put it in `config/policy.local.yaml`. Palisade uses that file in preference to `policy.yaml` when it exists, and Git ignores it.
-
-### Step 6. Install and start
-
-macOS or Linux:
-
-```
-bash scripts/bootstrap.sh
-```
-
-Windows (PowerShell):
-
-```
-powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1
-```
-
-This one command sets up a private Python environment, downloads the model server and both models, records their fingerprints, and starts Palisade. The first run downloads about 10 GB, so give it time. When it finishes you'll see:
-
-```
-base ready on http://127.0.0.1:8081
-guardian ready on http://127.0.0.1:8082
-
-Palisade ready: http://127.0.0.1:8080/
-```
-
-### Step 7. Open Palisade
-
-Open **http://127.0.0.1:8080/** in your web browser. This address only works on your own computer; nothing is reachable from your network.
-
-Keep the terminal window open. Palisade runs inside it.
-
-### Step 8. Stop and start again
-
-- **To stop:** click in the terminal window and press `Ctrl+C`.
-- **To start again later:** `cd` into the palisade folder and run `bash scripts/bootstrap.sh` again. It skips the downloads, checks every file against its recorded fingerprint, and starts in seconds.
+Every model in `config/models.yaml` used by default carries a published `sha256:` line, and the llama.cpp archives and servers carry published hashes per platform. A download that differs is rejected before anything is recorded. A model without a published hash is trusted on first download, and Palisade prints a note saying so. Either way, Palisade records each file's fingerprint after installation and refuses to start if a file ever changes.
 
 ---
 
@@ -198,110 +162,101 @@ The note also shows the **violation likelihood** the guardian assigned (0% to 10
 
 ---
 
-## Part 3: Set up the audit log service account
+## Part 3: The audit log service account
 
-In desktop mode, your own login account runs Palisade and owns the audit log. That means you could edit the log without anyone knowing, apart from the hash chain showing that something changed. Service mode separates those duties:
+In desktop mode, the person using Palisade also owns the audit log. They could edit it, and only the hash chain would show that something changed. Service mode separates those duties:
 
 | Account | Role |
 |---|---|
-| **Service account** (`_palisade` on macOS, `palisade` on Linux) | Runs Palisade and writes the audit log. Cannot log in, has no administrator rights, and cannot change its own code, settings, policy, or models. |
-| **Audit group** (`palisade-audit`) | Members can read the audit log and review it. They cannot change it. |
-| **Administrator** (you) | Added to the audit group to review. Changing anything requires `sudo`, which the operating system records. |
-| **root** | Break glass. Can do anything; off-box anchors (Part 4) make any rewrite of history detectable afterward. |
+| **Service account** (`_palisade` on macOS, `palisade` on Linux, the virtual account `NT SERVICE\Palisade` on Windows) | Runs Palisade and writes the audit log. Cannot log in, has no administrator rights, and cannot change its own code, settings, policy, models, or recorded fingerprints. |
+| **Setup job** (runs as root, or SYSTEM on Windows) | Downloads and verifies the models and records their fingerprints, which the service account is not allowed to write. Runs at install and at each startup, and exits in seconds when nothing is missing. |
+| **Audit group** (`palisade-audit`; `Palisade Audit` on Windows) | Members can read the audit log and the reviewer token. They cannot change either. |
+| **Administrator** (you) | Added to the audit group to review. Changing anything requires elevation, which the operating system records. |
+| **root / SYSTEM** | Break glass. Can do anything; off-machine anchors (Part 4) make any rewrite of history detectable afterward. |
 
-### Before you begin
+### Where Palisade keeps its files
 
-- Complete Part 1 on this machine first. The installer reuses the models you already downloaded.
-- You need an **Administrator** account (macOS) or an account in the `sudo`, `wheel`, or `admin` group (Linux). The installer refuses any other account as the reviewer.
-- Stop the desktop copy (`Ctrl+C` in its terminal). Both copies use the same ports and cannot run at once.
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Program (read-only) | `/opt/palisade` | `C:\Program Files\Palisade` | `/opt/palisade` |
+| Settings and policy, service mode | `/Library/Application Support/Palisade/config` | `C:\ProgramData\Palisade\config` | `/etc/palisade` |
+| Data and audit log, service mode | `/Library/Application Support/Palisade/data` | `C:\ProgramData\Palisade\data` | `/var/lib/palisade` |
+| Settings and policy, desktop mode | `~/Library/Application Support/Palisade/config` | `%LOCALAPPDATA%\Palisade\config` | `~/.config/palisade` |
+| Data and audit log, desktop mode | `~/Library/Application Support/Palisade/data` | `%LOCALAPPDATA%\Palisade\data` | `~/.local/share/palisade` |
 
-### Steps on macOS
+In the data folder: `audit/` holds the chain, `state/reviewer.token` the reviewer token, `logs/` the logs, `models/` the models, and `manifest.lock` the recorded fingerprints. A source checkout keeps everything in its own `config/` and `data/` folders.
 
-1. **Run the installer** from the palisade folder, naming your Administrator account:
+The service-mode data folder is called **DATA** in the steps below.
 
-   ```
-   sudo scripts/service/macos/install.sh your-account-name
-   ```
+### What the installer sets up
 
-   Enter your password when asked. The installer:
-   - creates the hidden `_palisade` account (no password, no login shell) and the `palisade-audit` group
-   - adds your account to `palisade-audit`
-   - copies Palisade to `/opt/palisade`, owned by root, so the service can read but not change it
-   - moves your models, fingerprints, and existing audit log into `/opt/palisade/data`
-   - installs a background service that starts at boot and restarts if it fails
-   - installs a `palisade` command you can run from anywhere
+**macOS:** the hidden `_palisade` account (no password, no login shell) and the `palisade-audit` group; two launchd jobs in `/Library/LaunchDaemons`, `com.palisade.setup` (root) and `com.palisade.server` (`_palisade`); `palisade` and `palisade-mode` commands in `/usr/local/bin`; and **Palisade** in Applications.
 
-2. **Log out and back in.** Your new group membership only applies to new sessions. Skipping this is the most common cause of "Permission denied" in the next steps.
+**Windows:** the service **Palisade**, running as `NT SERVICE\Palisade` (Windows manages this account; it has no password and cannot sign in interactively); the scheduled task **Palisade Setup**, running as SYSTEM at startup; the local group **Palisade Audit**; folder permissions that give the service write access only to its audit, log, state, eval, and compliance folders; `palisade` on the system PATH; and **Palisade** in the Start menu.
 
-3. **Confirm the service is running:**
+**Linux:** the `palisade` system account (no login shell) and the `palisade-audit` group; the systemd units `palisade-setup.service` (root) and `palisade.service` (`palisade`), both hardened so they can write only their own folders; and the `palisade` and `palisade-mode` commands. `docs/SERVICE-INSTALL.md` lists every owner and permission.
 
-   ```
-   sudo launchctl print system/com.palisade.server | grep state
-   ```
+### Confirm service mode works
 
-   You should see `state = running`. Then check the log:
+1. **Sign out and back in.** Your audit group membership applies only to new sessions. Skipping this is the most common cause of "Permission denied" below.
 
-   ```
-   tail -n 20 /opt/palisade/data/logs/palisade.log
-   ```
+2. **Confirm the service is running.**
 
-   Look for `Palisade ready`.
+   - macOS: `sudo launchctl print system/com.palisade.server | grep state` shows `state = running`.
+   - Windows: `Get-Service Palisade` shows `Running`.
+   - Linux: `systemctl status palisade` shows `active (running)`.
 
-4. **Confirm the GPU is in use:**
-
-   ```
-   grep -i metal /opt/palisade/data/logs/base-server.log | head -3
-   ```
-
-   Lines mentioning Metal mean the GPU is in use. If there are none, the service is running on the processor and answers will be slow. This is the one part of the macOS installer that could not be tested before release; please report which result you get.
-
-5. **Confirm the permissions work.** Run each of these as yourself, without `sudo`:
+3. **Confirm the permissions.** Run these as yourself, without elevating.
 
    ```
    palisade audit verify
    ```
-   Should succeed and report the chain as intact.
+   Succeeds and reports the chain as intact (or empty, before your first message).
+
+   macOS and Linux: `cat DATA/state/reviewer.token`. Windows: `Get-Content C:\ProgramData\Palisade\data\state\reviewer.token`. Prints a long random string, the reviewer token for Part 4. The file appears after the service first starts.
+
+   macOS and Linux: `touch DATA/audit/test`. Windows: `New-Item C:\ProgramData\Palisade\data\audit\test`. **Fails** with "Permission denied" (or "Access is denied"). That failure is the point: you can read the audit log but not add to or change it.
+
+4. **On a Mac, confirm the GPU is in use** once setup has finished and Palisade has started:
 
    ```
-   cat /opt/palisade/data/state/reviewer.token
-   ```
-   Should print a long random string. This is the reviewer token; you'll need it in Part 4.
-
-   ```
-   touch /opt/palisade/data/audit/test
-   ```
-   Should **fail** with "Permission denied." That failure is the point: you can read the audit log but not add to or change it.
-
-6. **Open Palisade** at http://127.0.0.1:8080/ as before. It now runs in the background, so there is no terminal window to keep open.
-
-To remove the service later: `sudo scripts/service/macos/uninstall.sh`. The audit data in `/opt/palisade/data` is kept on purpose; deleting audit records should be a deliberate decision.
-
-### Steps on Linux
-
-1. Run the installer, naming your administrator account:
-
-   ```
-   sudo scripts/service/linux/install.sh your-account-name
+   grep -i metal "/Library/Application Support/Palisade/data/logs/base-server.log" | head -3
    ```
 
-   It does the same things as the macOS installer, using a systemd service with extra restrictions: even if a file permission were wrong, the service can only write to its own audit, log, and state folders.
+   Lines mentioning Metal mean the GPU is in use. If there are none, the service runs on the processor and answers are slow. Whether macOS gives a background service account access to the GPU could not be tested before release; please report which result you get. Desktop mode runs in your own session and always has the GPU.
 
-2. Log out and back in.
+### Switch modes later
 
-3. Confirm the service is running:
+```
+sudo palisade-mode service YOUR-ADMIN-ACCOUNT        # macOS, Linux
+sudo palisade-mode desktop
+palisade-mode status
+```
 
-   ```
-   systemctl status palisade
-   journalctl -u palisade -n 20
-   ```
+On Windows, in an elevated PowerShell:
 
-   Look for `active (running)` and `Palisade ready`.
+```
+& "C:\Program Files\Palisade\libexec\palisade-mode.ps1" -Mode service -Reviewer "$env:COMPUTERNAME\you"
+& "C:\Program Files\Palisade\libexec\palisade-mode.ps1" -Mode desktop
+```
 
-4. Run the three permission checks from macOS step 5. The paths are the same.
+Switching never deletes data. Service-mode and desktop-mode data live in different folders (see the table above), so each mode keeps its own audit history.
 
-### Windows
+### Uninstall
 
-Service mode is not scripted for Windows yet. `docs/SERVICE-INSTALL.md` describes the equivalent manual setup with a local service account and folder permissions.
+| | Command |
+|---|---|
+| macOS | `sudo /opt/palisade/uninstall.sh` (add `--remove-accounts` to also delete `_palisade` and `palisade-audit`) |
+| Windows | **Settings > Apps > Installed apps > Palisade > Uninstall**, or `msiexec /x Palisade-<version>-windows-x64.msi` |
+| Linux | `sudo apt remove palisade` or `sudo dnf remove palisade` |
+
+Uninstalling removes the program, the service, and its jobs. Settings and data, including the audit log, stay where they are: deleting audit records should be a deliberate decision, not a side effect of uninstalling.
+
+### Deploying to many machines
+
+- **macOS (MDM or Terminal):** `sudo installer -pkg Palisade-<version>-macos-arm64.pkg -target /` installs service mode. For desktop mode, add `-applyChoiceChangesXML desktop-mode.plist`, from the `.dmg`'s "For administrators" folder. Add a reviewer afterward with `sudo dseditgroup -o edit -a ACCOUNT -t user palisade-audit`.
+- **Windows (Intune, Group Policy, msiexec):** `msiexec /i Palisade-<version>-windows-x64.msi /qn PALISADE_MODE=service PALISADE_REVIEWER="DOMAIN\user"`. Use `PALISADE_MODE=desktop` for desktop mode. Upgrades keep the mode chosen at first install.
+- **Linux:** install the package, then run `palisade-mode` from your configuration management.
 
 ---
 
@@ -312,7 +267,7 @@ Two kinds of audit file exist, and the difference matters:
 - **The chain** (`audit-*.jsonl` files) is the record of truth. Palisade writes one line per exchange. Never edit these files.
 - **Review logs** are readable reports generated from the chain. Each one states whether the chain was intact when it was generated, and ends with its own fingerprint so later edits to the report can be detected.
 
-On a service install, run commands as `palisade ...`. In desktop mode, run `source .venv/bin/activate` in the palisade folder first, then use `python -m palisade ...` wherever this guide says `palisade ...`.
+With an installed copy, run commands as `palisade ...` in a terminal; it uses the files of the mode chosen at install (see the table in Part 3). In a source checkout, run `source .venv/bin/activate` in the palisade folder first, then use `python -m palisade ...` wherever this guide says `palisade ...`.
 
 ### Procedure A: Routine review in the browser
 
@@ -320,15 +275,15 @@ Suggested cadence: weekly, or whatever your organization's audit review policy r
 
 1. Open **http://127.0.0.1:8080/review**.
 2. Paste the reviewer token and select **Open review**.
-   - Service mode: `cat /opt/palisade/data/state/reviewer.token`
-   - Desktop mode: `cat data/state/reviewer.token` from the palisade folder
+   - Service mode: `cat DATA/state/reviewer.token` (Windows: `Get-Content C:\ProgramData\Palisade\data\state\reviewer.token`)
+   - Desktop mode: the same file in your own data folder (Part 3 table); in a source checkout, `data/state/reviewer.token`
 3. Read the summary at the top. **Chain** should say **Intact**. If it says **Broken**, stop and follow Procedure E.
 4. Select **Flagged** and review each flagged exchange. Then select **Blocked** and look for patterns, such as repeated attempts in one category.
 5. Select **Export review log** to download a report. A copy is also saved in the audit folder under `reports/`. File the downloaded copy wherever your review records belong.
 6. Select **Export anchor** and store the file off this machine (Procedure C).
 7. Select **Sign out of review** when finished.
 
-Your logins, failed logins, and exports are themselves recorded in `data/logs/review-access.log`. After ten failed logins in ten minutes, review login locks for ten minutes.
+Your logins, failed logins, and exports are themselves recorded in `logs/review-access.log` in the data folder. After ten failed logins in ten minutes, review login locks for ten minutes.
 
 ### Procedure B: Review from the command line
 
@@ -389,22 +344,22 @@ A broken chain means at least one record was changed, removed, or reordered afte
 
 1. **Do not fix, delete, or regenerate anything.** The damaged files are the evidence.
 2. Note the record number and file name shown in the message.
-3. Copy the entire audit folder to separate storage (this needs `sudo` in service mode), keeping the originals in place.
+3. Copy the entire audit folder to separate storage (this needs `sudo`, or an elevated terminal on Windows, in service mode), keeping the originals in place.
 4. Run `palisade audit check-anchor` against your most recent anchors. The newest anchor that still passes tells you the last point in time when history was intact.
-5. Check who used `sudo` in that period. On macOS: `log show --predicate 'process == "sudo"' --last 7d`. On Linux: `journalctl _COMM=sudo --since "7 days ago"`.
+5. Check who used `sudo` in that period. On macOS: `log show --predicate 'process == "sudo"' --last 7d`. On Linux: `journalctl _COMM=sudo --since "7 days ago"`. On Windows, review the Security event log for elevated processes (event 4688, which requires process-creation auditing) and for changes to the Palisade Audit group (events 4732 and 4733).
 6. Report it through your organization's incident process.
 
 ### Procedure F: Rotate the reviewer token
 
 Rotate it when a reviewer leaves or you suspect the token was exposed.
 
-1. Delete the token file:
-   - Service mode: `sudo rm /opt/palisade/data/state/reviewer.token`
-   - Desktop mode: `rm data/state/reviewer.token`
+1. Delete `state/reviewer.token` in the data folder (service mode needs `sudo`, or an elevated terminal on Windows).
 2. Restart Palisade:
    - macOS service: `sudo launchctl kickstart -k system/com.palisade.server`
    - Linux service: `sudo systemctl restart palisade`
-   - Desktop: `Ctrl+C`, then `bash scripts/bootstrap.sh`
+   - Windows service: `Restart-Service Palisade` in an elevated PowerShell
+   - Desktop mode: quit Palisade (sign out and back in, or end the `palisade run` process) and open it again
+   - Source checkout: `Ctrl+C`, then `bash scripts/bootstrap.sh`
 3. A new token is generated. Anyone with the review page open is returned to the sign-in screen and needs the new token.
 
 ### Procedure G: Add or remove a reviewer
@@ -425,16 +380,25 @@ sudo usermod -aG palisade-audit their-account                        # add
 sudo gpasswd -d their-account palisade-audit                          # remove
 ```
 
+Windows (elevated PowerShell):
+
+```
+Add-LocalGroupMember -Group "Palisade Audit" -Member "DOMAIN\their-account"
+Remove-LocalGroupMember -Group "Palisade Audit" -Member "DOMAIN\their-account"
+```
+
 The person must log out and back in for the change to apply. When removing someone, also rotate the reviewer token (Procedure F), since they may have a copy.
 
 ### Procedure H: Change the policy on a service install
 
-The service cannot change its own policy, so changes go through `sudo` and are recorded.
+The service cannot change its own policy, so changes go through an elevated session and are recorded.
 
-1. Edit the policy:
+1. Edit `policy.yaml` in the service-mode settings folder (Part 3 table), for example:
 
    ```
-   sudo nano /opt/palisade/config/policy.yaml
+   sudo nano /etc/palisade/policy.yaml                                           # Linux
+   sudo nano "/Library/Application Support/Palisade/config/policy.yaml"          # macOS
+   notepad C:\ProgramData\Palisade\config\policy.yaml                           # Windows, elevated
    ```
 
    Increase the `version:` value so audit records show which policy applied.
@@ -445,7 +409,7 @@ The service cannot change its own policy, so changes go through `sudo` and are r
    sudo palisade install
    ```
 
-   It finds the models already present and only updates the fingerprints.
+   On Windows, run `palisade install` in an elevated terminal. It finds the models already present and only updates the fingerprints.
 
 3. Restart the service (see Procedure F, step 2).
 4. Confirm the Policy section of the panel shows the new version and "Matches lock."
@@ -487,10 +451,14 @@ The llama-server hash is published per platform (for example, `macos-arm64`). In
 
 | Command | What it does |
 |---|---|
-| `bash scripts/bootstrap.sh` | Set up, download, and start (desktop mode). Safe to rerun. |
+| `palisade open` | Open Palisade in the browser, starting it first in desktop mode. |
 | `palisade doctor` | Show detected hardware, chosen models, and whether files match their fingerprints. |
-| `palisade install` | Download models and record fingerprints. Rerun after changing settings or policy. |
-| `palisade run` | Start Palisade (desktop mode, without the bootstrap steps). |
+| `palisade install` | Record intended changes to settings or policy (and, in a source checkout, download models). |
+| `palisade setup` | Installed copies: download and verify missing models. Setup normally runs on its own. |
+| `palisade import FOLDER` | Reuse models and the audit chain from a source checkout's `data` folder. |
+| `palisade run` | Start Palisade in the foreground. |
+| `palisade-mode service ACCOUNT`, `palisade-mode desktop`, `palisade-mode status` | Installed copies on macOS and Linux: switch or show the mode (Part 3). |
+| `bash scripts/bootstrap.sh` | Source checkout: set up, download, and start. Safe to rerun. |
 | `palisade eval` | Test the guardian against labeled examples and report its accuracy. |
 | `palisade benchmark` | Score this installation against the NIST AI Risk Management Framework. |
 | `palisade publish-hashes` | Write verified model and binary fingerprints into `models.yaml` (Procedure I). |
@@ -501,9 +469,9 @@ The llama-server hash is published per platform (for example, `macos-arm64`). In
 | `palisade audit check-report FILE` | Confirm a saved review log was not edited. |
 | `palisade audit permissions` | Reset permissions on existing audit files. |
 
-In desktop mode, prefix these with `python -m` after `source .venv/bin/activate`.
+In a source checkout, prefix these with `python -m` after `source .venv/bin/activate`.
 
-In service mode, `install` and `benchmark` change root-owned files, so run them with `sudo`. `eval` starts its own copies of the models on the same ports as the service, so stop the service first (`sudo launchctl bootout system/com.palisade.server` on macOS, `sudo systemctl stop palisade` on Linux), run `sudo palisade eval`, then start the service again.
+In service mode, `install`, `setup`, `import`, and `benchmark` change root-owned files, so run them with `sudo` (on Windows, in an elevated terminal). `eval` starts its own copies of the models on the same ports as the service, so stop the service first (`sudo launchctl bootout system/com.palisade.server` on macOS, `sudo systemctl stop palisade` on Linux, `Stop-Service Palisade` on Windows), run `sudo palisade eval`, then start the service again.
 
 ---
 
@@ -511,9 +479,11 @@ In service mode, `install` and `benchmark` change root-owned files, so run them 
 
 **`pip: command not found`.** Use `python3 -m pip` instead of `pip`. macOS names the command differently.
 
-**`hf: command not found` or `huggingface-cli: command not found`.** The tool installed, but your terminal cannot find it. Use the Python form from Part 1, Step 3, which does not depend on it.
+**The setup page says "Setup stopped."** Usually a download failed: no network, or the server was unavailable. Parts already downloaded are kept. Retry by restarting Palisade (service mode: restart the computer, or run `sudo palisade setup`; desktop mode: open Palisade again). The message on the page and `logs/setup.log` in the data folder give the reason.
 
-**Download fails with 401, 403, or "gated."** You have not accepted the model's terms on Hugging Face, or you are not signed in. Repeat Part 1, Step 3.
+**The setup page says "A file changed since it was verified."** A model, the model server, a setting, or the policy differs from its recorded fingerprint. Palisade will not start and does not re-trust changed files on its own. If you changed settings or the policy on purpose, run `sudo palisade install` (Procedure H) to record it. If you did not, find out what changed before going further; Procedure E applies the same thinking to the audit log.
+
+**Download fails with 401, 403, or "gated."** The model requires a Hugging Face account and accepted terms. The default models do not. Create a Read token at huggingface.co/settings/tokens, accept the model's terms on its page, then provide the token: set `HF_TOKEN`, or put it in a file named `hf-token` in Palisade's settings folder (service mode; make it readable only by root and the audit group), or sign in with the Hugging Face CLI (desktop mode and source checkouts). Palisade sends the token only to Hugging Face, never to the storage servers it redirects to.
 
 **Download fails with 404.** A model repository or file name has changed. Check the names in `config/models.yaml` against the Hugging Face page, character for character.
 
@@ -533,9 +503,11 @@ While that session is open, http://127.0.0.1:8080/ on the other computer reaches
 
 **"THESE PACKAGES DO NOT MATCH THE HASHES" during setup.** A Python package downloaded during setup is not the exact file recorded in `requirements.lock`. Stop and try again later or from another network; if it persists, report it (see `SECURITY.md`). Do not bypass it by installing from `requirements.txt`.
 
-**The panel shows "Not responding."** A model server stopped. Check `data/logs/base-server.log` or `guardian-server.log` (under `/opt/palisade/data/logs/` in service mode), then restart Palisade.
+**The panel shows "Not responding."** A model server stopped. Check `logs/base-server.log` or `logs/guardian-server.log` in the data folder (Part 3 table), then restart Palisade.
 
-**Answers take a very long time.** The models are running on the processor. On a Mac in service mode, see Part 3, macOS step 4.
+**Answers take a very long time.** The models are running on the processor. On a Mac in service mode, see Part 3, "Confirm service mode works," step 4.
+
+**macOS says the installer "cannot be opened because it is from an unidentified developer."** You opened an unsigned test build. Released installers are signed and notarized by Apple. Download the release from the Releases page instead.
 
 **"Permission denied" reading the reviewer token after the service install.** Log out and back in so your audit group membership applies.
 
@@ -545,13 +517,15 @@ While that session is open, http://127.0.0.1:8080/ on the other computer reaches
 
 ## Security defaults
 
-A fresh clone is locked down before anyone changes a setting:
+A fresh install or clone is locked down before anyone changes a setting:
 
 - It listens only on this machine (`127.0.0.1`) and refuses to start on a network address unless you explicitly opt in.
 - Every API call needs a session token, and audit review needs a separate reviewer token.
 - Messages are stored in the audit log as fingerprints, not text.
 - Python packages install at exact versions and are checked against recorded hashes; models and the model server are checked against published hashes where they exist, and against their recorded fingerprints on every start.
 - Audit files are readable only by their owner and the audit group.
+- Released installers are signed (Apple Developer ID with notarization, Authenticode on Windows, OpenPGP on Linux), built only by the repository's release workflow, and published with checksums and build-provenance attestations. Every executable and library inside them is signed too, and Palisade's startup check covers the signed files.
+- The installers bundle their own Python and model server, pinned by hash in `packaging/inputs.yaml`, so nothing on the computer's own `PATH` is used and nothing is downloaded at run time except the models, which are checked against published hashes.
 
 To report a vulnerability, see `SECURITY.md`.
 
@@ -570,7 +544,9 @@ Stating the limits plainly is part of making the audit trail trustworthy.
 ## More documentation
 
 - `docs/AUDIT-REVIEW.md`: the audit model in depth, with a NIST SP 800-53 control mapping
-- `docs/SERVICE-INSTALL.md`: exactly what the service installers create, and the Windows setup
+- `docs/SERVICE-INSTALL.md`: exactly what each installer creates, with owners and permissions
+- `packaging/SIGNING.md`: how releases are built, signed, notarized, and verified
+- `packaging/windows/README.md`: Windows installer details and WiX licensing
 - `docs/ARCHITECTURE.md`: how requests flow and why the design is shaped this way
 - `docs/MODELS.md`: model choices, provenance, and licenses
 - `docs/COMPLIANCE.md`: the NIST AI RMF crosswalk and benchmark

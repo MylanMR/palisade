@@ -1,0 +1,54 @@
+# Everything the installers bundle or use to build, pinned by version and SHA-256.
+# build_payload.py refuses any download that does not match. The llama.cpp archives are
+# pinned in config/models.yaml (archive_sha256), so source installs and installers share
+# one set of hashes.
+#
+# To update an entry: change the version, download the file, verify it against the
+# publisher's checksum list, and record the new hash here in the same commit.
+
+# Python runtime embedded in every installer, from python-build-standalone (Astral).
+# Hashes copied from the release's SHA256SUMS file and checked against a download.
+python:
+  version: "3.12.15"
+  release: "20261009"
+  base_url: https://github.com/astral-sh/python-build-standalone/releases/download/20261009
+  files:
+    macos-arm64:
+      name: cpython-3.12.15+20261009-aarch64-apple-darwin-install_only_stripped.tar.gz
+      sha256: 233f8e15255b3e1d1fd47ea5dd5230dfed803f371138e896e54d98c60ae19f6f
+    macos-x64:
+      name: cpython-3.12.15+20261009-x86_64-apple-darwin-install_only_stripped.tar.gz
+      sha256: fb3187d95334813b88940db0f1ca57b84cedfd552739c3a5771c3ea0e49988c9
+    linux-x64:
+      name: cpython-3.12.15+20261009-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+      sha256: ffa8f85f1b56e88b687f08d743d817015524b86a9365fd921243132b80f1a36d
+    windows-x64:
+      name: cpython-3.12.15+20261009-x86_64-pc-windows-msvc-install_only_stripped.tar.gz
+      sha256: 11ed9f8a6ac64fb1b5a55e40e305a6744a3f77a70863c8f8197a6e4349abc64a
+
+# Which llama.cpp build each installer bundles (keys into models.yaml llama_cpp.assets).
+# The Linux and Windows Vulkan builds include the CPU backends and load the Vulkan one
+# only when a Vulkan driver is present, so one build covers GPU and CPU-only machines.
+llama:
+  macos-arm64: macos-arm64
+  macos-x64: macos-x64
+  linux-x64: linux-x64-vulkan
+  windows-x64: windows-x64-vulkan
+
+# Windows service wrapper. 2.12.0 is the latest stable release; 3.x is still alpha.
+winsw:
+  version: "2.12.0"
+  url: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe
+  sha256: 05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da
+
+# Linux package builder (deb and rpm from one config). Hash from the release's checksums.txt.
+nfpm:
+  version: "2.47.0"
+  url: https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz
+  sha256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+
+# Windows installer toolset, installed as a .NET tool (NuGet verifies its package signature).
+# WiX 7 requires accepting its Open Source Maintenance Fee EULA; projects with under
+# US$10,000 a year in revenue from WiX use owe no fee. See packaging/windows/README.md.
+wix:
+  version: "7.0.0"

@@ -51,8 +51,7 @@ def test_locks_pin_every_requirement_with_hashes(lock, sources):
 
 def test_every_installer_uses_hash_verified_lock():
     for script in ["scripts/bootstrap.sh", "scripts/bootstrap.ps1",
-                   "scripts/service/macos/install.sh", "scripts/service/linux/install.sh",
-                   ".github/workflows/ci.yml"]:
+                   ".github/workflows/ci.yml", ".github/workflows/release.yml"]:
         text = (ROOT / script).read_text()
         installs = [l for l in text.splitlines() if "pip install" in l and not l.strip().startswith("#")]
         assert installs, f"{script} installs nothing?"

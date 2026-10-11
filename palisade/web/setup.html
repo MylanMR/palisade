@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setting up Palisade</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/shared.css">
+<style>
+  body { overflow-y: auto; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 48px 24px; }
+  header p { margin: 6px 0 0; color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 18px 20px; margin-top: 22px; }
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  ol.steps li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--rule); }
+  ol.steps li:first-child { border-top: 0; }
+  .mark { width: 18px; flex: none; font-weight: 700; text-align: center; }
+  li.done .mark { color: var(--ok); } li.failed .mark { color: var(--block); } li.running .mark { color: var(--flag); }
+  li.pending { color: var(--muted); }
+  .bar { height: 8px; background: var(--soft); border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; margin: 10px 0 4px; }
+  .bar > div { height: 100%; width: 0; background: var(--ok); transition: width .4s; }
+  ul.problems { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; }
+  ul.problems li { margin: 3px 0; overflow-wrap: anywhere; }
+  pre { white-space: pre-wrap; font: 12px var(--mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Setting up Palisade</h1>
+    <p id="lede">Palisade downloads its two models the first time it runs, and checks each one against the fingerprint published with this release before using it.</p>
+  </header>
+
+  <section class="card" aria-live="polite">
+    <div id="state" class="status">Checking</div>
+    <ol class="steps" id="steps"></ol>
+    <div id="dl" hidden>
+      <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar"><div></div></div>
+      <div class="small muted" id="dl-text"></div>
+    </div>
+  </section>
+
+  <section class="card" id="trouble" hidden>
+    <h2 id="trouble-title">Something needs attention</h2>
+    <p class="small" id="trouble-text"></p>
+    <ul class="problems" id="problems"></ul>
+    <p class="small muted" id="trouble-help"></p>
+  </section>
+</div>
+<script src="/static/shared.js"></script>
+<script>
+const STEPS = [['config', 'Prepare settings and policy'], ['binaries', 'Check the model server'],
+               ['models', 'Download and verify the models'], ['lock', 'Record fingerprints']];
+let last = { at: 0, done: 0 }, rate = 0, mode = 'desktop';
+
+function gb(n) { return (n / 1e9).toFixed(n > 1e10 ? 0 : 1) + ' GB'; }
+function eta(sec) {
+  if (!isFinite(sec) || sec <= 0) return '';
+  const m = Math.round(sec / 60);
+  return m < 1 ? 'less than a minute left' : m < 90 ? `about ${m} min left` : `about ${Math.round(m / 60)} h left`;
+}
+
+function render(r) {
+  mode = r.mode;
+  const s = r.setup || {}, steps = s.steps || [];
+  const ol = clear($('#steps'));
+  const seen = Object.fromEntries(steps.map(x => [x.name.startsWith('model:') ? 'models' : x.name, x]));
+  for (const [key, label] of STEPS) {
+    const modelSteps = steps.filter(x => x.name.startsWith('model:'));
+    let st = seen[key] ? seen[key].state : 'pending', text = label;
+    if (key === 'models' && modelSteps.length) {
+      const run = modelSteps.find(x => x.state === 'running');
+      st = run ? 'running' : modelSteps.some(x => x.state === 'failed') ? 'failed' : 'done';
+      if (run) text = run.label;
+    }
+    if (s.state === 'complete' && st === 'pending') st = 'done';
+    const mark = { done: '✓', failed: '✕', running: '•', pending: '' }[st];
+    ol.append(el('li', { class: st }, el('span', { class: 'mark', 'aria-hidden': 'true' }, mark), el('span', {}, text)));
+  }
+
+  const d = s.download;
+  $('#dl').hidden = !d;
+  if (d) {
+    const now = Date.now() / 1000;
+    if (last.model === d.model && now - last.at > 1) {
+      const r2 = (d.done - last.done) / (now - last.at);
+      rate = rate ? rate * 0.7 + r2 * 0.3 : r2;
+    }
+    if (last.model !== d.model || now - last.at > 1) last = { at: now, done: d.done, model: d.model };
+    const pct = d.total ? Math.min(100, d.done / d.total * 100) : 0;
+    $('#bar').firstElementChild.style.width = pct.toFixed(1) + '%';
+    $('#bar').setAttribute('aria-valuenow', Math.round(pct));
+    $('#dl-text').textContent = d.total
+      ? `${d.model}: ${gb(d.done)} of ${gb(d.total)}` + (rate > 0 ? `, ${eta((d.total - d.done) / rate)}` : '')
+      : `${d.model}: ${gb(d.done)} downloaded`;
+  }
+
+  const mismatch = (r.problems || []).filter(p => p.kind === 'mismatch');
+  const trouble = s.state === 'error' || mismatch.length;
+  $('#trouble').hidden = !trouble;
+  const state = clear($('#state'));
+  if (r.ready) {
+    state.className = 'status ok'; state.textContent = 'Ready. Starting Palisade…';
+    waitForMain();
+  } else if (trouble) {
+    state.className = 'status bad'; state.textContent = 'Setup cannot continue';
+    $('#trouble-title').textContent = mismatch.length ? 'A file changed since it was verified' : 'Setup stopped';
+    $('#trouble-text').textContent = mismatch.length
+      ? 'Palisade will not start while a file differs from its recorded fingerprint, and it does not re-trust changed files on its own.'
+      : (s.message || 'Setup stopped.');
+    const ul = clear($('#problems'));
+    for (const p of (mismatch.length ? mismatch.map(p => p.message) : (s.problems || []))) ul.append(el('li', {}, p.length > 300 ? el('pre', {}, p) : p));
+    $('#trouble-help').textContent = mode === 'service'
+      ? 'An administrator should find out why the file changed. If the change was intended (for example, an edited policy), run "sudo palisade install" (on Windows, "palisade install" in an elevated terminal) to record it, then restart the Palisade service. If setup stopped on a download, it retries when the setup job runs again, at the next restart.'
+      : 'If you changed a setting or the policy on purpose, run "palisade install" to record it. If setup stopped on a download, close and reopen Palisade to retry; finished parts are kept.';
+  } else {
+    state.className = 'status warn';
+    state.textContent = s.state === 'pending'
+      ? (mode === 'service' ? 'Waiting for the setup service to start' : 'Starting setup')
+      : 'Setting up';
+  }
+}
+
+async function waitForMain() {
+  for (let i = 0; i < 120; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const res = await fetch('/api/status', { credentials: 'same-origin' });
+      if (res.status !== 503) { location.replace('/'); return; }
+    } catch { /* restarting */ }
+  }
+}
+
+let timer;
+async function poll() {
+  try { const r = await api('/api/setup/status'); render(r); if (r.ready) return; }
+  catch (e) {
+    if (e.status === 401) { location.reload(); return; }
+    const st = $('#state'); st.className = 'status warn'; st.textContent = 'Reconnecting…';
+  }
+  timer = setTimeout(poll, 2000);
+}
+poll();
+</script>
+</body>
+</html>

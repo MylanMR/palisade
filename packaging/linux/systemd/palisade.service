@@ -1,0 +1,26 @@
+# Palisade (service mode). Runs as the locked-down palisade account. While setup is
+# still downloading models it serves a progress page instead of the assistant.
+[Unit]
+Description=Palisade policy-enforced local LLM
+Wants=palisade-setup.service
+After=network.target
+ConditionPathExists=/opt/palisade/install-mode
+
+[Service]
+User=palisade
+Group=palisade-audit
+Environment=PALISADE_MODE=service
+UMask=0027
+WorkingDirectory=/var/lib/palisade
+ExecStart=/opt/palisade/bin/palisade run
+Restart=on-failure
+RestartSec=10
+# Even if a file permission were wrong, the service can only write its own state.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/palisade/audit /var/lib/palisade/logs /var/lib/palisade/state /var/lib/palisade/eval /var/lib/palisade/compliance
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

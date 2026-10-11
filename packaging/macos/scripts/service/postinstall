@@ -1,0 +1,3 @@
+#!/bin/bash
+# The person running the installer becomes the audit reviewer if they are an Administrator.
+exec /opt/palisade/libexec/palisade-mode service "$(stat -f%Su /dev/console)"
