@@ -107,6 +107,15 @@ def cmd_run(args):
     from .server import build_app
 
     settings, manifest = load_settings(), load_models()
+    from .exposure import check_exposure
+    errors, warnings = check_exposure(settings)
+    if errors:
+        print("refusing to start; network exposure check failed:")
+        for e in errors:
+            print(f"  - {e}")
+        return 1
+    for w in warnings:
+        print(w + "\n")
     host, tier = _tier(settings, manifest)
     problems = verify_installation(manifest, tier)
     if problems:
@@ -188,6 +197,37 @@ def cmd_eval(args):
     return 0
 
 
+def cmd_publish_hashes(args):
+    """Publish the verified fingerprints from manifest.lock into config/models.yaml."""
+    from .fetch import publish_hashes
+    from . import CONFIG_DIR
+    settings, manifest = load_settings(), load_models()
+    host, tier = _tier(settings, manifest)
+    problems = [p for p in verify_installation(manifest, tier) if "config/" not in p]
+    if problems:
+        print("refusing: files on disk do not match manifest.lock, so their hashes cannot be published:")
+        for p in problems:
+            print(f"  - {p}")
+        return 1
+    path = CONFIG_DIR / "models.yaml"
+    new, changes = publish_hashes(path.read_text(encoding="utf-8"), read_lock())
+    if not changes:
+        print("models.yaml already carries the published hashes; nothing to change.")
+        return 0
+    import yaml
+    yaml.safe_load(new)  # never write a file that no longer parses
+    if args.dry_run:
+        print(new)
+        return 0
+    path.write_text(new, encoding="utf-8")
+    print("Published into config/models.yaml:")
+    for c in changes:
+        print(f"  - {c}")
+    print("\nBefore committing, compare each model hash with the SHA256 shown on its Hugging Face file page.")
+    print("Then run `python -m palisade install` to record the updated models.yaml in manifest.lock.")
+    return 0
+
+
 def cmd_benchmark(args):
     """Score the installation against the NIST AI RMF catalog."""
     from compliance.nist_ai_rmf import benchmark as bm
@@ -257,6 +297,8 @@ def main(argv=None):
     sub.add_parser("run"); sub.add_parser("doctor"); sub.add_parser("verify")
     e = sub.add_parser("eval"); e.add_argument("--cases", default=str(ROOT / "eval" / "cases.jsonl"))
     sub.add_parser("benchmark")
+    ph = sub.add_parser("publish-hashes", help="write verified fingerprints from manifest.lock into models.yaml")
+    ph.add_argument("--dry-run", action="store_true", help="print the result instead of writing it")
     a = sub.add_parser("audit", help="review-side audit commands")
     asub = a.add_subparsers(dest="action", required=True)
     r = asub.add_parser("report", help="write a plain-text review log from the chain")
@@ -275,7 +317,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     return {"install": cmd_install, "run": cmd_run, "doctor": cmd_doctor,
             "verify": cmd_verify, "eval": cmd_eval, "benchmark": cmd_benchmark,
-            "audit": cmd_audit}[args.cmd](args)
+            "audit": cmd_audit, "publish-hashes": cmd_publish_hashes}[args.cmd](args)
 
 
 if __name__ == "__main__":

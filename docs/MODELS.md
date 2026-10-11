@@ -26,14 +26,14 @@ Before first install, for each model:
 2. Confirm the uploader is one you trust and the file name matches the `file` field, or update the `file` field to match.
 3. Replace `VERIFY/<name>` with the real repo id.
 
-On first download, Palisade records the file's SHA-256 in `manifest.lock`. From then on, every run checks the file on disk against that hash and refuses to start on a mismatch, so the trust decision you make once is enforced automatically thereafter.
+If the model's block has a `sha256:` line, the download is checked against it and rejected on a mismatch before anything is recorded. Otherwise Palisade trusts the first download and says so. After installation, Palisade records the file's SHA-256 in `manifest.lock`, and every run checks the file on disk against it and refuses to start on a mismatch. `palisade publish-hashes` turns a verified installation into published `sha256:` lines (README, Procedure I).
 
 If you already hold vetted GGUF files, skip the repos entirely:
 
 ```bash
 python -m palisade install \
   --model-url gemma4-12b=file:///models/gemma-4-12B-it-Q4_K_M.gguf \
-  --model-url shieldgemma-2b=file:///models/shieldgemma-2b-Q8_0.gguf
+  --model-url shieldgemma-2b=file:///models/shieldgemma-2b.Q8_0.gguf
 ```
 
 ## Swapping the guardian

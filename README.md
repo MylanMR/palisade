@@ -69,7 +69,7 @@ Without Git, download the ZIP from the GitHub page, unzip it, and `cd` into the 
 python3 --version
 ```
 
-You should see `Python 3.9` or higher. The version Apple includes with its Command Line Tools (3.9) works. If you get "command not found," install Python from python.org (or `brew install python` on a Mac with Homebrew) and open a new terminal window.
+You should see `Python 3.9` or higher. The version Apple includes with its Command Line Tools (3.9) works. Python 3.9 no longer receives security updates from the Python project, and several of Palisade's dependencies have stopped releasing new versions for it, so a newer Python (from python.org or Homebrew) is the better long-term choice. If you get "command not found," install Python from python.org (or `brew install python` on a Mac with Homebrew) and open a new terminal window.
 
 On Windows, use `py --version` instead.
 
@@ -113,7 +113,9 @@ Two things to watch:
 - The guardian file name uses dots: `shieldgemma-2b.Q8_0.gguf`. Type it exactly.
 - Edit the block whose name matches the model. The `gemma4-12b` block needs the 12B repo; the `gemma4-e4b` block is for 16 GB machines and needs a different, smaller model. If you are on a 16 GB machine, find a current `gemma-4-E4B-it` GGUF repo on Hugging Face and fill it in.
 
-Why this step exists: the quantized model files are published by community members, and their locations change over time. Checking them yourself once is part of trusting what you run. After the first download, Palisade records each file's fingerprint and refuses to start if a file ever changes.
+Why this step exists: the quantized model files are published by community members, and their locations change over time. Checking them yourself once is part of trusting what you run.
+
+If a model's block in `models.yaml` includes a `sha256:` line, Palisade checks the download against it and rejects any file that differs, before recording anything. Without that line, Palisade trusts the first download it receives and prints a note saying so. Either way, it records each file's fingerprint after installation and refuses to start if a file ever changes. To add the `sha256:` lines once your own install is working, see Procedure I in Part 4.
 
 ### Step 5. Choose a policy
 
@@ -448,6 +450,37 @@ The service cannot change its own policy, so changes go through `sudo` and are r
 3. Restart the service (see Procedure F, step 2).
 4. Confirm the Policy section of the panel shows the new version and "Matches lock."
 
+### Procedure I: Publish verified model hashes
+
+Do this once, after your first installation works, if you maintain a copy of Palisade that others install from. It turns your verified downloads into the reference every later install is checked against.
+
+1. Confirm your install is intact:
+
+   ```
+   palisade doctor
+   ```
+
+   It should report that the installation matches `manifest.lock`.
+
+2. Write the recorded fingerprints into `config/models.yaml`:
+
+   ```
+   palisade publish-hashes
+   ```
+
+   It refuses if any model or binary on disk has changed since installation. Add `--dry-run` to preview the result without writing it.
+
+3. Cross-check each model hash independently. On Hugging Face, open the model file's page (for example, select `gemma-4-12B-it-Q4_K_M.gguf` in the repository's file list). The page shows the file's SHA256. It must match the `sha256:` line that was written for that model. If it does not, stop: the file you downloaded is not the one the publisher shows.
+4. Record the updated `models.yaml`:
+
+   ```
+   palisade install
+   ```
+
+5. Commit `config/models.yaml`.
+
+The llama-server hash is published per platform (for example, `macos-arm64`). Installs on other platforms still trust their first download until someone publishes a hash from that platform.
+
 ---
 
 ## Command reference
@@ -460,6 +493,7 @@ The service cannot change its own policy, so changes go through `sudo` and are r
 | `palisade run` | Start Palisade (desktop mode, without the bootstrap steps). |
 | `palisade eval` | Test the guardian against labeled examples and report its accuracy. |
 | `palisade benchmark` | Score this installation against the NIST AI Risk Management Framework. |
+| `palisade publish-hashes` | Write verified model and binary fingerprints into `models.yaml` (Procedure I). |
 | `palisade audit verify` | Recompute the audit chain. |
 | `palisade audit report` | Write a readable review log. |
 | `palisade audit anchor` | Export the chain's current fingerprint for off-machine storage. |
@@ -485,6 +519,20 @@ In service mode, `install` and `benchmark` change root-owned files, so run them 
 
 **"Refusing to start; installation does not match manifest.lock."** A model, the model server, or a settings or policy file changed since installation. If you changed settings or policy on purpose, run `palisade install` again to record the new fingerprints. If you did not, find out what changed before continuing.
 
+**"Refusing to start; network exposure check failed."** `server.host` in `config/settings.yaml` is set to an address other machines can reach. Palisade refuses this by default because its web pages assume local-only access: traffic is not encrypted, and the page gives a session token to any browser that loads it. Set `host` back to `127.0.0.1`. To use Palisade from another computer, see the next entry.
+
+**Using Palisade from another computer.** Keep Palisade local and reach it through an SSH tunnel, which encrypts the connection and requires your login on the Palisade machine. On the Palisade machine, enable SSH (on a Mac: System Settings > General > Sharing > Remote Login). From the other computer, run:
+
+```
+ssh -L 8080:127.0.0.1:8080 your-account@palisade-machine
+```
+
+While that session is open, http://127.0.0.1:8080/ on the other computer reaches Palisade. If you have instead placed Palisade behind a reverse proxy that adds encryption and a login, you can set `allow_remote: true` under `server:` in `settings.yaml`; Palisade then starts with a warning. It never starts on a network address with `require_token: false`.
+
+**"Does not match the hash published in config/models.yaml."** A downloaded or hand-placed model or model-server file is not the one the published hash describes. Palisade moved it aside with a `.rejected` suffix and installed nothing. Do not rename it back. Check the repository and file name in `models.yaml`, download again, and if it still fails, compare against the SHA256 shown on the Hugging Face file page.
+
+**"THESE PACKAGES DO NOT MATCH THE HASHES" during setup.** A Python package downloaded during setup is not the exact file recorded in `requirements.lock`. Stop and try again later or from another network; if it persists, report it (see `SECURITY.md`). Do not bypass it by installing from `requirements.txt`.
+
 **The panel shows "Not responding."** A model server stopped. Check `data/logs/base-server.log` or `guardian-server.log` (under `/opt/palisade/data/logs/` in service mode), then restart Palisade.
 
 **Answers take a very long time.** The models are running on the processor. On a Mac in service mode, see Part 3, macOS step 4.
@@ -494,6 +542,18 @@ In service mode, `install` and `benchmark` change root-owned files, so run them 
 **"That token was not accepted" on the review page.** Copy the token again. It is one long line with no spaces. If the token was rotated, the old one no longer works.
 
 ---
+
+## Security defaults
+
+A fresh clone is locked down before anyone changes a setting:
+
+- It listens only on this machine (`127.0.0.1`) and refuses to start on a network address unless you explicitly opt in.
+- Every API call needs a session token, and audit review needs a separate reviewer token.
+- Messages are stored in the audit log as fingerprints, not text.
+- Python packages install at exact versions and are checked against recorded hashes; models and the model server are checked against published hashes where they exist, and against their recorded fingerprints on every start.
+- Audit files are readable only by their owner and the audit group.
+
+To report a vulnerability, see `SECURITY.md`.
 
 ## What Palisade does not do
 

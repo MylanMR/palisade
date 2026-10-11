@@ -30,6 +30,16 @@ from .hardware import Host
 def _download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
+    if url.startswith("file://"):
+        from urllib.parse import urlparse, unquote
+        from urllib.request import url2pathname
+        src = Path(url2pathname(unquote(urlparse(url).path)))
+        if not src.is_file():
+            raise RuntimeError(f"local file not found: {src}")
+        print(f"  copying {src}")
+        shutil.copyfile(src, tmp)
+        tmp.replace(dest)
+        return
     with httpx.stream("GET", url, follow_redirects=True, timeout=None) as r:
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code} fetching {url}")
@@ -45,6 +55,34 @@ def _download(url: str, dest: Path) -> None:
                     sys.stdout.flush()
         sys.stdout.write("\n")
     tmp.replace(dest)
+
+
+class HashMismatch(RuntimeError):
+    pass
+
+
+def _published_model_hash(m: dict) -> str | None:
+    h = str(m.get("sha256", "") or "").strip().lower()
+    return h or None
+
+
+def _published_server_hash(cfg: dict, key: str) -> str | None:
+    h = str((cfg.get("server_sha256") or {}).get(key, "") or "").strip().lower()
+    return h or None
+
+
+def _reject(path: Path, what: str, expected: str, actual: str) -> None:
+    """Move a file that failed verification aside so it can never be recorded as trusted."""
+    rejected = path.with_name(path.name + ".rejected")
+    try:
+        path.replace(rejected)
+        where = f" Moved to {rejected} for inspection."
+    except OSError:
+        where = ""
+    raise HashMismatch(
+        f"{what} does not match the hash published in config/models.yaml.\n"
+        f"  expected {expected}\n  got      {actual}\n"
+        f"The file was not installed.{where} Do not use it until you know why it differs.")
 
 
 def _extract(archive: Path, into: Path) -> None:
@@ -75,7 +113,19 @@ def install_binaries(host: Host, manifest: dict) -> Path:
     target = BIN_DIR / tag
     server = target / ("llama-server.exe" if host.os == "windows" else "llama-server")
     if server.exists():
-        print(f"llama.cpp {tag} already installed for {key}")
+        digest = sha256_file(server)
+        published = _published_server_hash(cfg, key)
+        if published and digest != published:
+            raise HashMismatch(
+                f"installed llama-server {tag} for {key} does not match the hash published in "
+                f"config/models.yaml.\n  expected {published}\n  got      {digest}")
+        lock = read_lock()
+        lc = lock.setdefault("llama_cpp", {})
+        if lc.get("platform") != key or lc.get("verified_against_published") != bool(published):
+            lc.update({"platform": key, "verified_against_published": bool(published)})
+            write_lock(lock)
+        print(f"llama.cpp {tag} already installed for {key}"
+              + (" (matches published hash)" if published else ""))
         return server
 
     stage = DATA_DIR / "stage"
@@ -99,10 +149,22 @@ def install_binaries(host: Host, manifest: dict) -> Path:
         server.chmod(server.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     shutil.rmtree(stage, ignore_errors=True)
 
+    digest = sha256_file(server)
+    published = _published_server_hash(cfg, key)
+    if published and digest != published:
+        shutil.rmtree(target, ignore_errors=True)
+        raise HashMismatch(
+            f"llama-server {tag} for {key} does not match the hash published in config/models.yaml.\n"
+            f"  expected {published}\n  got      {digest}\nThe binary was removed and not installed.")
+    if not published:
+        print(f"note: no published hash for llama-server on {key}; recording this download as trusted "
+              f"(trust on first use). Compare it with a known-good install before relying on it.")
+
     lock = read_lock()
     lock.setdefault("llama_cpp", {})
     lock["llama_cpp"] = {"tag": tag, "asset": cfg["assets"][key].format(tag=tag),
-                         "server_sha256": sha256_file(server)}
+                         "platform": key, "server_sha256": digest,
+                         "verified_against_published": bool(published)}
     write_lock(lock)
     print(f"installed llama-server {tag} -> {server}")
     return server
@@ -119,8 +181,11 @@ def install_model(model_id: str, manifest: dict, url_override: str | None = None
     lock = read_lock()
     models_lock = lock.setdefault("models", {})
 
+    published = _published_model_hash(m)
     if dest.exists():
         digest = sha256_file(dest)
+        if published and digest != published:
+            _reject(dest, f"{model_id} ({dest.name})", published, digest)
         recorded = models_lock.get(model_id, {}).get("sha256")
         if recorded and recorded != digest:
             raise RuntimeError(
@@ -144,7 +209,13 @@ def install_model(model_id: str, manifest: dict, url_override: str | None = None
     print(f"fetching {model_id} ({m.get('approx_gb', '?')} GB) from {url}")
     _download(url, dest)
     digest = sha256_file(dest)
-    models_lock[model_id] = {"file": m["file"], "repo": m["repo"], "source_url": url, "sha256": digest}
+    if published and digest != published:
+        _reject(dest, f"{model_id} ({dest.name})", published, digest)
+    if not published:
+        print(f"note: no published hash for {model_id}; recording this download as trusted "
+              f"(trust on first use). Compare it with the SHA256 shown on the Hugging Face file page.")
+    models_lock[model_id] = {"file": m["file"], "repo": m["repo"], "source_url": url, "sha256": digest,
+                             "verified_against_published": bool(published)}
     write_lock(lock)
     print(f"{model_id} sha256 {digest}")
     return dest
@@ -179,10 +250,17 @@ def verify_installation(manifest: dict, tier: str) -> list[str]:
     elif sha256_file(server) != lc.get("server_sha256"):
         problems.append("llama-server binary hash does not match manifest.lock")
 
+    pub_srv = _published_server_hash(manifest["llama_cpp"], lc.get("platform", "")) if lc.get("platform") else None
+    if pub_srv and lc.get("server_sha256") != pub_srv:
+        problems.append("llama-server hash in manifest.lock differs from the hash published in models.yaml")
+
     t = manifest["tiers"][tier]
     for mid in (t["base"], t["guardian"]):
         p = model_path(mid, manifest)
         rec = lock.get("models", {}).get(mid, {}).get("sha256")
+        pub = _published_model_hash(manifest["models"].get(mid, {}))
+        if pub and rec and rec != pub:
+            problems.append(f"model {mid}: manifest.lock differs from the hash published in models.yaml")
         if not p.exists():
             problems.append(f"model file missing: {mid}")
         elif rec is None:
@@ -249,3 +327,50 @@ def manifest_components(manifest: dict, tier: str, full: bool = False) -> dict:
             "problems": [f"{c['kind']} {c['name']}: {c['status']}" for c in bad],
             "components": comps,
             "llama_cpp_tag": lc.get("tag", "")}
+
+
+def publish_hashes(models_yaml: str, lock: dict) -> tuple[str, list[str]]:
+    """Write the fingerprints in manifest.lock into models.yaml as published values.
+
+    Edits the text in place so comments and layout survive. Returns (new_text, changes).
+    Model hashes go on a `sha256:` line inside each model's block; the llama-server hash
+    goes under `llama_cpp.server_sha256.<platform>`.
+    """
+    import re
+    text, changes = models_yaml, []
+
+    for mid, rec in sorted((lock.get("models") or {}).items()):
+        h = rec.get("sha256")
+        if not h:
+            continue
+        block = re.search(rf"(?m)^  {re.escape(mid)}:\n((?:    .*\n|\s*\n)+)", text)
+        if not block:
+            continue
+        body = block.group(1)
+        if re.search(r"(?m)^    sha256:.*$", body):
+            new_body = re.sub(r"(?m)^    sha256:.*$", f"    sha256: {h}", body, count=1)
+        else:
+            new_body = re.sub(r"(?m)^(    file:.*\n)", rf"\1    sha256: {h}\n", body, count=1)
+        if new_body != body:
+            text = text[:block.start(1)] + new_body + text[block.end(1):]
+            changes.append(f"{mid}: sha256 {h[:16]}...")
+
+    lc = lock.get("llama_cpp") or {}
+    plat, h = lc.get("platform"), lc.get("server_sha256")
+    if plat and h:
+        sect = re.search(r"(?m)^llama_cpp:\n((?:  .*\n|\s*\n)+)", text)
+        if sect:
+            body = sect.group(1)
+            if re.search(r"(?m)^  server_sha256:\s*$", body):
+                if re.search(rf"(?m)^    {re.escape(plat)}:.*$", body):
+                    new_body = re.sub(rf"(?m)^    {re.escape(plat)}:.*$", f"    {plat}: {h}", body, count=1)
+                else:
+                    new_body = re.sub(r"(?m)^(  server_sha256:\s*\n)", rf"\1    {plat}: {h}\n", body, count=1)
+            else:
+                entry = ("  # Published hashes of the extracted llama-server binary, per platform.\n"
+                         f"  server_sha256:\n    {plat}: {h}\n")
+                new_body = re.sub(r"(?m)^(  base_url:.*\n)", rf"\1{entry}", body, count=1)
+            if new_body != body:
+                text = text[:sect.start(1)] + new_body + text[sect.end(1):]
+                changes.append(f"llama-server ({plat}): sha256 {h[:16]}...")
+    return text, changes

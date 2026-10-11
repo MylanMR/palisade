@@ -14,8 +14,8 @@ if [ ! -d .venv ]; then
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
-python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r requirements.txt
+# Exact versions with verified hashes; pip refuses any package that does not match.
+python -m pip install --quiet --disable-pip-version-check --require-hashes -r requirements.lock
 
 python -m palisade doctor || true
 python -m palisade install "$@"

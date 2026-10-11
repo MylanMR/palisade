@@ -10,8 +10,8 @@ if (-not (Test-Path ".venv")) {
     Invoke-Expression "$py -m venv .venv"
 }
 & .\.venv\Scripts\Activate.ps1
-python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r requirements.txt
+# Exact versions with verified hashes; pip refuses any package that does not match.
+python -m pip install --quiet --disable-pip-version-check --require-hashes -r requirements.lock
 
 python -m palisade doctor
 python -m palisade install @args

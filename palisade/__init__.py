@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 ROOT = Path(os.environ.get("PALISADE_ROOT", Path(__file__).resolve().parent.parent))
 CONFIG_DIR = ROOT / "config"

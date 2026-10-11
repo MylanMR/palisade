@@ -85,8 +85,7 @@ say "Installing code to $PREFIX (root-owned, read-only to the service)"
 mkdir -p "$PREFIX"
 rsync -a --delete --exclude '/data/' --exclude '/.venv/' --exclude '/.git/' --exclude '__pycache__/' "$SRC/" "$PREFIX/"
 if [[ ! -x "$PREFIX/.venv/bin/python" ]]; then "$PY" -m venv "$PREFIX/.venv"; fi
-"$PREFIX/.venv/bin/python" -m pip install --quiet --upgrade pip
-"$PREFIX/.venv/bin/python" -m pip install --quiet -r "$PREFIX/requirements.txt"
+"$PREFIX/.venv/bin/python" -m pip install --quiet --disable-pip-version-check --require-hashes -r "$PREFIX/requirements.lock"
 "$PREFIX/.venv/bin/python" -m compileall -q "$PREFIX/palisade" "$PREFIX/compliance" || true
 chown -R root:wheel "$PREFIX"
 chmod -R u+rwX,go+rX,go-w "$PREFIX"

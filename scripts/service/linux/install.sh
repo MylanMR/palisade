@@ -52,7 +52,7 @@ else
   (cd "$SRC" && tar --exclude=./data --exclude=./.venv --exclude=./.git --exclude='__pycache__' -cf - .) | (cd "$PREFIX" && tar -xf -)
 fi
 [[ -x "$PREFIX/.venv/bin/python" ]] || "$PY" -m venv "$PREFIX/.venv"
-"$PREFIX/.venv/bin/python" -m pip install --quiet -r "$PREFIX/requirements.txt"
+"$PREFIX/.venv/bin/python" -m pip install --quiet --disable-pip-version-check --require-hashes -r "$PREFIX/requirements.lock"
 "$PREFIX/.venv/bin/python" -m compileall -q "$PREFIX/palisade" "$PREFIX/compliance" || true
 chown -R root:root "$PREFIX"
 chmod -R u+rwX,go+rX,go-w "$PREFIX"

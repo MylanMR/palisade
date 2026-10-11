@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1
+
+Secure defaults for anyone installing from the repository.
+
+- **Hash-locked dependencies.** `requirements.lock` and `requirements-dev.lock` pin every Python package to an exact version with hashes, for Python 3.9 through 3.12 on macOS, Linux, and Windows. The bootstrap scripts, both service installers, and CI install with `--require-hashes`, so pip refuses any package that does not match. The unverified `pip install --upgrade pip` step is removed.
+- **Exposure guard.** Palisade refuses to start on a network address unless `allow_remote: true` is set, warns when it is, and never starts on a network address with the session token disabled. The README explains reaching Palisade remotely through an SSH tunnel.
+- **Published hashes.** Models and the llama-server binary can carry published SHA-256 values in `models.yaml`. Downloads and hand-placed files that do not match are moved aside and never recorded as trusted. `palisade publish-hashes` writes a verified installation's fingerprints into `models.yaml`, preserving its comments.
+- **CI hardening.** Actions pinned to full commit SHAs, workflow token limited to read-only, checkout credentials not persisted, and Dependabot configured for action updates.
+- **SECURITY.md.** Private reporting through GitHub, and a clear line between vulnerabilities and known limitations.
+- **Fix.** `--model-url name=file:///path` installs from a local file. It was documented since 0.1.0 but never worked.
+- 16 new tests (54 total).
+
 ## 0.2.0
 
 Audit review and separation of duties.

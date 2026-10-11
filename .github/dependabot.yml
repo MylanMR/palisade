@@ -1,0 +1,9 @@
+# Proposes pull requests when pinned GitHub Actions have new releases.
+# Python dependencies are locked with hashes in requirements*.lock and are regenerated
+# deliberately (see CONTRIBUTING.md) rather than updated automatically.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
