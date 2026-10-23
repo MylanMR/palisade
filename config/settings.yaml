@@ -6,10 +6,13 @@ server:
   host: 127.0.0.1          # never expose beyond the local machine in desktop mode
   port: 8080
   require_token: true      # UI receives an HttpOnly cookie; API clients send Authorization: Bearer <token>
+  # allowed_hosts: []      # extra Host header values to answer, e.g. [palisade.example.org:443] behind
+                           # a reverse proxy. Loopback names are always allowed; anything else is refused,
+                           # which stops DNS-rebinding pages from reaching Palisade.
 
 runtime:
-  base_port: 8081          # llama-server for the assistant model
-  guardian_port: 8082      # llama-server for the guardian model
+  base_port: 8081          # llama-server for the assistant model (Windows; macOS and Linux use private sockets)
+  guardian_port: 8082      # llama-server for the guardian model (Windows; macOS and Linux use private sockets)
   context_tokens: 4096
   gpu_layers: auto         # auto | 0 | integer. auto = offload everything if a GPU backend is present
   threads: auto            # auto = physical cores minus one
@@ -36,3 +39,23 @@ generation:
     You are a local assistant. Answer directly and precisely. If you are unsure, say so.
   temperature: 0.4
   max_tokens: 1024
+
+# The harness: fixed rules around every model call (see docs/HARNESS.md).
+# These numbers can be tightened or loosened within fixed bounds; a value outside its
+# bound is replaced by the bound and reported at startup and on the Runtime panel.
+# Clean-up of hidden characters and template tokens, the tokenizer probe, server-held
+# history, the canary, model-server lockdown, and fail-closed handling are always on.
+harness:
+  max_message_tokens: 2048         # 16 to 8192; also capped by context_tokens minus max_tokens
+  max_history_turns: 20            # 0 to 64 prior turns sent as context
+  rate_per_minute: 30              # 1 to 600 chat messages per minute, all clients together
+  queue_depth: 4                   # 0 to 32 requests that may wait for the model
+  queue_wait_seconds: 120
+  generation_timeout_seconds: 300
+  guardian_timeout_seconds: 60
+  check_conversation: true         # also screen the last few user messages together
+  conversation_window: 3           # 0 to 10 earlier messages included in that check
+  max_blocks_per_conversation: 3   # then the conversation is closed
+  conversation_idle_minutes: 60    # history is discarded after this long without use
+  max_conversations: 32
+  max_body_kb: 256                 # largest request body accepted

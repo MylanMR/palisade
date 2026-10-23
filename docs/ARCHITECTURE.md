@@ -8,23 +8,26 @@ Palisade is one Python process that supervises two model servers and exposes an 
 |-----------|------|----------------|
 | Hardware probe | `palisade/hardware.py` | Detect OS, arch, RAM, cores, GPU; pick backend and tier. |
 | Fetcher | `palisade/fetch.py` | Download the pinned binary and models; write and verify `manifest.lock`. |
-| Runtime | `palisade/runtime.py` | Launch and health-check the two `llama-server` processes. |
+| Runtime | `palisade/runtime.py` | Launch, lock down, and health-check the two `llama-server` processes. |
+| Harness | `palisade/harness.py` | Fixed rules around every model call: admission, clean-up, tokenizer probe, budget, server-held history, canary, fail closed. See `docs/HARNESS.md`. |
 | Policy | `palisade/policy.py` | Turn `policy.yaml` into guardian prompts; resolve category actions. |
 | Guardian | `palisade/guardian.py` | Score prompts and responses against the policy via logprobs. |
 | Audit | `palisade/audit.py` | Append-only, hash-chained decision log with verification. |
 | Server | `palisade/server.py` | Token auth, request lifecycle, UI, and API. |
 | CLI | `palisade/__main__.py` | `install`, `run`, `doctor`, `verify`, `eval`. |
 
-The assistant and the guardian each run as a separate `llama-server` instance from the same pinned `llama.cpp` build, on `127.0.0.1` at two ports. Keeping them in separate processes means either model can be swapped or resized without touching the other, and the guardian's behavior is independent of anything done to the assistant.
+The assistant and the guardian each run as a separate `llama-server` instance from the same pinned `llama.cpp` build. On macOS and Linux each listens on a Unix socket in a folder only Palisade's account can open; on Windows each listens on `127.0.0.1`. Either way each requires a per-launch key, so only Palisade can call them. Keeping them in separate processes means either model can be swapped or resized without touching the other, and the guardian's behavior is independent of anything done to the assistant.
 
 ## Request lifecycle
 
-1. The client calls `POST /api/chat`. The server checks the bearer token or the HttpOnly session cookie.
-2. Input check. The guardian scores the prompt against every category whose scope includes `input`. If the strongest matched action is `block`, generation is skipped and a policy refusal is returned. A `flag` marks the record and lets the request proceed.
-3. Generation. The assistant model produces a complete response. Streaming is deliberately disabled: the output check needs the whole answer before any of it is shown.
-4. Output check. The guardian scores the response against every category scoped to `output`. A `block` replaces the answer with the refusal; a `flag` marks the record.
-5. Audit. Exactly one record is appended for the exchange, carrying the decision, both guardian verdicts, the SHA-256 of the prompt and response, the policy version, and the manifest hash.
-6. The response and the audit metadata (sequence number, record hash, previous hash) return to the client. The UI renders them under the answer.
+1. The client calls `POST /api/chat` with a message and, after the first turn, a conversation id. Admission checks the Host header, the origin, and the body size; the server checks the bearer token or the HttpOnly session cookie; the rate limit and queue apply.
+2. Harness. The message is normalized, hidden characters and template tokens are removed, each model's tokenizer is probed for surviving control tokens, and the token count is checked against the budget. History comes from Palisade's own record of the conversation.
+3. Input check. The guardian scores the prompt against every category whose scope includes `input`. If the strongest matched action is `block`, generation is skipped and a policy refusal is returned. A `flag` marks the record and lets the request proceed.
+   The guardian also scores the last few user messages joined together, which catches a request split across turns.
+4. Generation. The assistant model produces a complete response. Streaming is deliberately disabled: the output check needs the whole answer before any of it is shown.
+5. Output check. The harness removes and probes for control tokens and checks for the system-prompt canary, then the guardian scores the response against every category scoped to `output`. A `block` replaces the answer with the refusal; a `flag` marks the record.
+6. Audit. Exactly one record is appended for the exchange, whatever the outcome (including requests rejected or stopped by the harness), carrying the decision, both guardian verdicts, the SHA-256 of the prompt and response, the policy version, and the manifest hash.
+7. The response and the audit metadata (sequence number, record hash, previous hash) return to the client. The UI renders them under the answer.
 
 ## The audit chain
 
@@ -37,6 +40,8 @@ This gives tamper-evidence, not tamper-proofing. An attacker who can write to th
 What Palisade defends against:
 
 - A user steering the assistant toward disallowed content. Both the prompt and the answer are screened by a separate model, and the block message replaces the answer rather than appending to it.
+- Role injection and hidden instructions. Template tokens, invisible characters, and look-alike characters are removed by fixed code before any model sees the text, and each model's tokenizer confirms no control token survived. Clients cannot supply history, so earlier assistant turns cannot be forged.
+- Bypassing the guardian by calling a model directly. The model servers accept requests only from Palisade, and any failed check stops the request.
 - Prompt injection aimed at the assistant. The `prompt_injection` category screens input for instruction-override attempts. The guardian reads its own fixed template, so injected text in the user prompt is data to the guardian, not instructions.
 - Silent drift in what is deployed. `manifest.lock` fingerprints the binary, both models, and all three config files. The stack refuses to start on a mismatch, so a swapped model or an edited policy cannot run unnoticed.
 - After-the-fact denial or quiet log edits. The hash chain makes any change to history detectable.

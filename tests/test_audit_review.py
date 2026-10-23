@@ -142,15 +142,7 @@ def test_model_labels(fname, label, quant):
 
 
 # ---------- review API ----------
-class StubGuardian:
-    model_id = "shieldgemma-2b"; mode = "combined"; threshold = 0.5
-    def healthy(self): return True
-    def check(self, stage, policy, prompt, response=""):
-        from palisade.audit import GuardianVerdict
-        from palisade.policy import Policy
-        hit = "nervegas" in prompt
-        return GuardianVerdict(stage, self.model_id, self.mode, 0.99 if hit else 0.01, 0.5, hit, [],
-                               Policy.strongest_action(policy.for_stage(stage)) if hit else "allow", 1)
+from fakes import FakeModelServer, FakeEndpoint, StubGuardian, LOCAL
 
 
 @pytest.fixture
@@ -158,19 +150,13 @@ def app_client(tmp_path, monkeypatch):
     import palisade.server as srv
     monkeypatch.setattr(srv, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(srv, "LOGS_DIR", tmp_path / "logs")
-
-    class FakeResp:
-        status_code = 200
-        def json(self): return {"choices": [{"message": {"content": "ok"}}]}
-    class FakeClient:
-        def post(self, *a, **k): return FakeResp()
-        def get(self, *a, **k): raise ConnectionError("no model server in tests")
-    monkeypatch.setattr(srv.httpx, "Client", lambda *a, **k: FakeClient())
     settings = load_settings()
     audit = AuditLog(tmp_path / "audit")
-    app = srv.build_app(settings, "http://base", StubGuardian(), "gemma4-12b", audit,
+    g = StubGuardian()
+    g.model_id = "shieldgemma-2b"
+    app = srv.build_app(settings, FakeEndpoint(FakeModelServer("ok")), g, "gemma4-12b", audit,
                         models_cfg=load_models(), tier="standard", backend="metal")
-    c = TestClient(app)
+    c = TestClient(app, base_url=LOCAL)
     c.get("/")
     token = (tmp_path / "state" / "reviewer.token").read_text().strip()
     return c, token, tmp_path
@@ -222,7 +208,8 @@ def test_status_reports_runtime_details(app_client):
     c, _, _ = app_client
     s = c.get("/api/status").json()
     assert s["assistant"]["label"] == "Gemma 4 12B" and s["assistant"]["backend_label"] == "Metal GPU"
-    assert s["assistant"]["healthy"] is False          # no model server in tests
+    assert s["assistant"]["healthy"] is True           # the fake model server answers /health
+    assert {c["id"] for c in s["harness"]["controls"]} >= {"probe", "history", "canary", "fail_closed"}
     assert s["guardian"]["check_input"] and s["guardian"]["check_output"]
     assert s["policy"]["counts"]["block"] >= 1 and s["policy"]["categories"]
     c.post("/api/chat", json={"message": "hello"})

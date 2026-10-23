@@ -125,6 +125,7 @@ def test_guardian_probability_parsing(monkeypatch):
 
     def fake_post(url, json):
         class R:
+            status_code = 200
             def raise_for_status(self): pass
             def json(self):
                 return {"completion_probabilities": [

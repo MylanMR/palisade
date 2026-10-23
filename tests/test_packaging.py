@@ -227,7 +227,7 @@ def test_setup_app(tmp_path):
     status = tmp_path / "setup-status.json"
     status.write_text(json.dumps({"state": "running", "steps": [], "download": {"model": "m", "done": 5, "total": 10}}))
     problems = [Problem("missing", "model file missing: m")]
-    c = TestClient(build_setup_app(load_settings(), lambda: problems, status))
+    c = TestClient(build_setup_app(load_settings(), lambda: problems, status), base_url="http://127.0.0.1:8080")
     assert c.get("/api/setup/status").status_code == 401
     page = c.get("/")
     assert page.status_code == 200 and "Setting up Palisade" in page.text

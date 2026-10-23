@@ -34,6 +34,7 @@ class GuardianVerdict:
     categories: list[str] = field(default_factory=list)   # attributed categories (per_category mode)
     action: str = "allow"      # block | flag | allow
     latency_ms: int = 0
+    note: str = ""             # set when the verdict was forced, e.g. "indeterminate: ..."
 
 
 @dataclass
@@ -45,13 +46,14 @@ class AuditRecord:
     policy_version: str
     base_model: str
     guardian_model: str
-    decision: str              # answered | blocked_input | blocked_output | flagged
+    decision: str              # answered | flagged | blocked_input | blocked_output | rejected | error
     prompt_sha256: str
     response_sha256: str
     verdicts: list[dict]
     latency_ms: int
     prompt: str | None = None
     response: str | None = None
+    harness: dict | None = None   # what the harness did: clean-up, probe, context, reasons
     prev_hash: str = GENESIS
     hash: str = ""
 

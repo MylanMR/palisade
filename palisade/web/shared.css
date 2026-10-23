@@ -39,7 +39,8 @@ button:focus-visible, a:focus-visible, textarea:focus-visible, input:focus-visib
 .notice.bad { border-color: var(--block); background: var(--block-bg); }
 .chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; }
 .chip.answered { color: var(--ok); } .chip.flagged { color: var(--flag); }
-.chip.blocked_input, .chip.blocked_output, .chip.block { color: var(--block); }
+.chip.blocked_input, .chip.blocked_output, .chip.block, .chip.error { color: var(--block); }
+.chip.rejected { color: var(--flag); }
 .chip.flag { color: var(--flag); } .chip.allow { color: var(--muted); }
 .copy { font: 12px var(--sans); padding: 1px 6px; margin-left: 4px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

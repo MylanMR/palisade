@@ -23,6 +23,7 @@ Only the latest release receives security fixes. Upgrade before reporting if you
 Palisade makes specific security claims. A way to break any of them is a vulnerability:
 
 - **Screening cannot be skipped.** A way to get a message to the assistant, or an answer to the screen, without the guardian check that the settings call for.
+- **The harness holds.** A way to get a chat-template control token, a client-written conversation turn, or text over the token limit to a model; to reach a model server without going through Palisade; or to get model text returned after a check failed or could not complete.
 - **Decisions are made on the server.** A way for the browser or an API client to change a threshold, policy, verdict, or audit record.
 - **Authentication holds.** A way to use `/api/*` without the session token, or `/api/review/*` without the reviewer token.
 - **The audit log shows tampering.** A way to alter, remove, or reorder records so that both `palisade audit verify` and `palisade audit check-anchor` (against an anchor taken beforehand) still pass.
@@ -44,6 +45,7 @@ These are documented in the README under "What Palisade does not do." Reports ab
 ## Security design
 
 - `docs/ARCHITECTURE.md`: request flow and threat model
+- `docs/HARNESS.md`: the fixed rules around every model call
 - `docs/AUDIT-REVIEW.md`: the audit chain, anchors, roles, and NIST SP 800-53 mapping
 - `docs/SERVICE-INSTALL.md`: exactly what each installer creates, and how it was verified
 - `packaging/SIGNING.md`: how releases are signed, and how to verify a download

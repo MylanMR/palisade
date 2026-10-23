@@ -32,6 +32,8 @@ DECISION_LABEL = {
     "flagged": "FLAGGED",
     "blocked_input": "BLOCKED-INPUT",
     "blocked_output": "BLOCKED-OUTPUT",
+    "rejected": "REJECTED",
+    "error": "ERROR-CLOSED",
 }
 
 
@@ -100,6 +102,17 @@ def render_report(log: AuditLog, *, decision: str | None = None,
             f"{_score(verdicts, 'input'):>5}  {_score(verdicts, 'output'):>5}  "
             f"{_cats(verdicts)[:24]:<24}  {str(r.get('policy_version', ''))[:22]:<22}  "
             f"{str(r.get('hash', ''))[:12]}")
+        h = r.get("harness") or {}
+        notes = [h.get("reason")] if h.get("reason") else []
+        if h.get("input_cleaned"):
+            notes.append("input cleaned: " + ", ".join(f"{k}={v}" for k, v in h["input_cleaned"].items()))
+        if h.get("output_cleaned"):
+            notes.append("output cleaned: " + ", ".join(f"{k}={v}" for k, v in h["output_cleaned"].items()))
+        notes += [v["note"] for v in verdicts if v.get("note")]
+        if h.get("source"):
+            notes.append(f"source: {h['source']}")
+        if notes:
+            lines.append(f"{'':>8}harness:  {_clean('; '.join(notes), 300)}")
         if include_content and (r.get("prompt") or r.get("response")):
             lines.append(f"{'':>8}prompt:   {_clean(r.get('prompt') or '')}")
             lines.append(f"{'':>8}response: {_clean(r.get('response') or '')}")
@@ -108,7 +121,8 @@ def render_report(log: AuditLog, *, decision: str | None = None,
     lines += [
         rule,
         "Summary:        " + "  ".join(f"{DECISION_LABEL.get(k, k)} {counts.get(k, 0)}"
-                                      for k in ("answered", "flagged", "blocked_input", "blocked_output")),
+                                      for k in ("answered", "flagged", "blocked_input", "blocked_output",
+                                                "rejected", "error")),
         f"Records listed: {len(records)}",
     ]
     body = "\n".join(lines) + "\n"

@@ -194,6 +194,24 @@ def _c_injection() -> Result:
     return _has_category("prompt_injection")
 
 
+@check("adversarial_harness")
+def _c_harness() -> Result:
+    """MEASURE-2.7: resilience to adversarial input is built in and has been tested."""
+    cases = ROOT / "eval" / "harness_cases.yaml"
+    if not (ROOT / "palisade" / "harness.py").exists() or not cases.exists():
+        return ("not_met", "no harness or harness test cases")
+    if "prompt_injection" not in _category_ids():
+        return ("partial", "harness present; policy has no prompt_injection category")
+    n = len((_load_yaml(cases) or {}).get("cases", []))
+    reports = sorted((DATA / "eval").glob("harness-*.json")) if (DATA / "eval").exists() else []
+    if not reports:
+        return ("partial", f"harness present with {n} attack cases; not yet run (`palisade harness test`)")
+    rep = json.loads(reports[-1].read_text())
+    if rep.get("failed", 1):
+        return ("partial", f"latest harness test {reports[-1].name}: {rep.get('failed')} of {rep.get('cases')} failed")
+    return ("met", f"latest harness test {reports[-1].name}: {rep.get('passed')} of {rep.get('cases')} passed")
+
+
 @check("block_action_enforced")
 def _c_block() -> Result:
     actions = {c.get("action") for c in _policy().get("categories", [])}

@@ -12,37 +12,19 @@ from palisade.audit import AuditLog
 from palisade.policy import Policy
 
 
-class StubGuardian:
-    """Flags any text containing a trigger word, at the stage's strongest action."""
-    model_id = "stub-guardian"; mode = "combined"; threshold = 0.5
-    def __init__(self): self._policy = Policy(load_policy())
-    def check(self, stage, policy, prompt, response=""):
-        from palisade.audit import GuardianVerdict
-        text = (prompt + " " + response).lower()
-        hit = "nervegas" in text
-        cats = policy.for_stage(stage)
-        action = Policy.strongest_action(cats) if hit else "allow"
-        return GuardianVerdict(stage, self.model_id, self.mode, 0.99 if hit else 0.01,
-                               self.threshold, hit, [], action, 3)
+from fakes import FakeModelServer, FakeEndpoint, StubGuardian, LOCAL
 
 
-def make_client(tmp_path, monkeypatch):
+def make_client(tmp_path, monkeypatch, server=None, guardian=None, settings=None):
     import palisade.server as srv
-    settings = load_settings()
+    settings = settings or load_settings()
     settings["audit"]["directory"] = str(tmp_path / "audit")
     monkeypatch.setattr(srv, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(srv, "LOGS_DIR", tmp_path / "logs")
-
-    class FakeResp:
-        status_code = 200
-        def json(self): return {"choices": [{"message": {"content": "Here is a safe answer."}}]}
-    class FakeClient:
-        def post(self, url, json=None): return FakeResp()
-    monkeypatch.setattr(srv.httpx, "Client", lambda *a, **k: FakeClient())
-
+    server = server or FakeModelServer()
     audit = AuditLog(Path(settings["audit"]["directory"]))
-    app = srv.build_app(settings, "http://base", StubGuardian(), "stub-base", audit)
-    return TestClient(app), audit
+    app = srv.build_app(settings, FakeEndpoint(server), guardian or StubGuardian(), "stub-base", audit)
+    return TestClient(app, base_url=LOCAL), audit
 
 
 def test_clean_prompt_answered(tmp_path, monkeypatch):

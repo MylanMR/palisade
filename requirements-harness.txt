@@ -1,0 +1,3 @@
+# Extra packages for the live harness tests (tests/test_harness_live.py): they build a tiny
+# test model. Not needed to run Palisade.
+gguf==0.17.1

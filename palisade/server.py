@@ -1,8 +1,12 @@
 """HTTP orchestrator. Request path:
 
-    client -> [token check] -> guardian(input) -> base model -> guardian(output) -> client
+    client -> admission -> [token check] -> harness clean-up and probe -> guardian(input)
+           -> base model -> harness output checks -> guardian(output) -> client
                                     |                                 |
                                     +------------ audit log ----------+
+
+The harness (harness.py) is the fixed-rule layer around every model call; the guardian
+is the model-based layer. Either can stop a request; neither can be skipped.
 
 Binds to 127.0.0.1 only. Streaming is deliberately off: the output check needs the
 complete response before anything reaches the user.
@@ -37,16 +41,20 @@ from . import (sha256_text, sha256_file, manifest_hash, read_lock, load_policy, 
                STATE_DIR, LOGS_DIR, AUDIT_DIR, secure_mkdir, secure_write_text, __version__)
 from .audit import AuditLog, AuditRecord, new_request_id, utc_now
 from .describe import label_of, quant_of, mode_text, BACKEND_LABEL
-from .guardian import Guardian
+from .guardian import Guardian, GuardianUnavailable
 from .policy import Policy
 from . import review as review_mod
+from . import harness as H
+from .runtime import as_endpoint
 
 WEB_DIR = Path(__file__).parent / "web"
 
 
 class ChatIn(BaseModel):
     message: str
-    history: list[dict[str, str]] = []
+    conversation_id: Optional[str] = None
+    # Refused when non-empty: history is held by the server so it cannot be forged.
+    history: Optional[list[Any]] = None
 
 
 class ReviewLogin(BaseModel):
@@ -82,11 +90,21 @@ def _review_log(event: str, **fields: Any) -> None:
         f.write(line + "\n")
 
 
-def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
+def _admission(app: FastAPI, settings: dict[str, Any], max_body_kb: int) -> None:
+    app.add_middleware(H.AdmissionMiddleware, hosts=H.allowed_hosts(settings["server"]),
+                       max_body=max_body_kb * 1024)
+
+
+def build_app(settings: dict[str, Any], base: Any, guardian: Guardian,
               base_model_id: str, audit: AuditLog, *,
               models_cfg: dict | None = None, tier: str | None = None,
-              backend: str = "unknown") -> FastAPI:
+              backend: str = "unknown", record_source: Optional[str] = None) -> FastAPI:
+    """`base` is the assistant model server's Endpoint (runtime.py). `record_source`
+    tags every audit record this app writes, for example "harness-test"; it is set by
+    the program that builds the app, never by a client."""
     app = FastAPI(title="Palisade", docs_url=None, redoc_url=None)
+    hcfg, hnotes = H.harness_config(settings)
+    _admission(app, settings, hcfg["max_body_kb"])
     policy = Policy(load_policy())
     lock = read_lock()
     mhash = manifest_hash(lock)
@@ -96,8 +114,21 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
     gen = settings["generation"]
     gcfg = settings.get("guardian", {})
     retain_full = settings["audit"].get("retain_content", "hashes") == "full"
-    client = httpx.Client(timeout=600.0)
-    health_client = httpx.Client(timeout=3.0)
+    base_ep = as_endpoint(base)
+    base_url = base_ep.url
+    client = base_ep.client(float(hcfg["generation_timeout_seconds"]))
+    health_client = base_ep.client(3.0)
+    probes = [H.TokenizerProbe("assistant", base_ep.client(30.0))]
+    if getattr(guardian, "endpoint", None) is not None:
+        probes.append(H.TokenizerProbe("guardian", guardian.endpoint.client(30.0)))
+    canary = H.Canary(gen["system_prompt"])
+    conversations = H.Conversations(hcfg["conversation_idle_minutes"], hcfg["max_conversations"],
+                                    hcfg["max_blocks_per_conversation"])
+    limiter = H.RateLimiter(hcfg["rate_per_minute"])
+    gate = H.Gate(hcfg["queue_depth"], hcfg["queue_wait_seconds"])
+    ctx_tokens = int(settings["runtime"].get("context_tokens", 4096))
+    max_new = int(gen.get("max_tokens", 1024))
+    budget_cache: dict[str, int] = {}
     models_cfg = models_cfg or {}
     started = utc_now()
 
@@ -146,9 +177,9 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
             "sha256": rec.get("sha256", ""),
         }
 
-    def _healthy(url: str) -> bool:
+    def _healthy(_url: str = "") -> bool:
         try:
-            return health_client.get(f"{url}/health").status_code == 200
+            return health_client.get("/health").status_code == 200
         except Exception:
             return False
 
@@ -226,6 +257,7 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
             "audit": audit.verify(),
             "session": _session(),
             "retain_content": "full" if retain_full else "hashes",
+            "harness": _harness_status(),
             # legacy flat fields kept for older clients
             "base_model": base_model_id, "guardian_model": guardian.model_id,
             "guardian_mode": guardian.mode, "threshold": guardian.threshold,
@@ -236,7 +268,7 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
     def health(req: Request):
         _authed(req)
         return {"assistant": _healthy(base_url), "guardian": _guardian_healthy(),
-                "session": _session()}
+                "session": _session(), "harness_live": _harness_status()["live"]}
 
     @app.get("/api/manifest")
     def manifest(req: Request, full: bool = False):
@@ -314,7 +346,8 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
     def review_records(req: Request, decision: Optional[str] = None, limit: int = 100,
                        before: Optional[int] = None):
         _reviewer(req)
-        allowed = {None, "", "answered", "flagged", "blocked", "blocked_input", "blocked_output"}
+        allowed = {None, "", "answered", "flagged", "blocked", "blocked_input", "blocked_output",
+                   "rejected", "error"}
         if decision not in allowed:
             raise HTTPException(400, "unknown decision filter")
         return audit.records(decision or None, min(max(limit, 1), 500), before)
@@ -342,56 +375,209 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
                         headers={"Content-Disposition":
                                  f'attachment; filename="palisade-anchor-{a["records"]}.json"'})
 
-    # ---- chat (enforcement path, unchanged in behavior) ----
+    # ---- harness helpers ----
+    def _harness_status() -> dict:
+        d = H.describe(hcfg, hnotes, base_ep.transport)
+        with lock_mutex:
+            d["live"] = {"conversations": conversations.count(), "waiting": gate.waiting,
+                         "rate_limited": session.get("rate_limited", 0),
+                         "busy_refused": session.get("busy_refused", 0)}
+        return d
+
+    def _budgets() -> tuple[int, int]:
+        """(largest message in tokens, tokens left for message plus history). Counted once
+        with the assistant's own tokenizer, on first use."""
+        if "context" not in budget_cache:
+            sys_tokens, special = probes[0].inspect(canary.system_prompt)
+            if special:
+                raise H.HarnessStop("error", "the configured system prompt contains a control token",
+                                    H.ERROR_MESSAGE, 503)
+            context = ctx_tokens - max_new - H.RESERVE_TOKENS - sys_tokens - H.TEMPLATE_OVERHEAD_TOKENS
+            if context < 64:
+                raise H.HarnessStop("error", "context window too small for the system prompt and answer length",
+                                    H.ERROR_MESSAGE, 503)
+            budget_cache["context"] = context
+            budget_cache["message"] = min(hcfg["max_message_tokens"], context - H.TEMPLATE_OVERHEAD_TOKENS)
+        return budget_cache["message"], budget_cache["context"]
+
+    def _inspect(text: str, stage: str) -> int:
+        """Probe every model's tokenizer. Returns the assistant token count."""
+        count = 0
+        for p in probes:
+            n, special = p.inspect(text)
+            if p.name == "assistant":
+                count = n
+            if special:
+                if stage == "input":
+                    raise H.HarnessStop("blocked_input", f"control token survived clean-up ({p.name} tokenizer)",
+                                        policy.block_message)
+                raise H.HarnessStop("blocked_output", f"answer contained a control token ({p.name} tokenizer)",
+                                    policy.block_message)
+        return count
+
+    def _json(status: int, body: dict, headers: Optional[dict] = None) -> JSONResponse:
+        return JSONResponse(body, status_code=status, headers=headers or {})
+
+    # ---- chat (enforcement path) ----
     @app.post("/api/chat")
     def chat(body: ChatIn, req: Request):
         _authed(req)
-        t0 = time.time()
-        rid = new_request_id()
-        prompt = body.message.strip()
-        if not prompt:
+        try:
+            limiter.take()
+        except H.Busy as e:
+            with lock_mutex:
+                session["rate_limited"] += 1
+            return _json(429, {"error": str(e), "code": "rate_limited"}, {"Retry-After": str(e.retry_after)})
+        if not body.message.strip():
             raise HTTPException(400, "empty message")
 
-        verdicts = []
-        decision = "answered"
+        t0 = time.time()
+        rid = new_request_id()
+        info: dict[str, Any] = {"source": record_source} if record_source else {}
+        verdicts: list = []
+        raw_prompt = body.message
+        prompt = raw_prompt.strip()
         response_text = ""
+        decision = "answered"
+        status_code = 200
+        conv = None
 
-        # 1. input check
-        if settings["guardian"].get("check_input", True):
-            v_in = guardian.check("input", policy, prompt)
-            verdicts.append(v_in)
-            if v_in.violated and v_in.action == "block":
-                decision = "blocked_input"
-                response_text = policy.block_message
-            elif v_in.violated and v_in.action == "flag":
-                decision = "flagged"
+        try:
+            if body.history:
+                raise H.HarnessStop("rejected", "client sent conversation history; the server holds history",
+                                    H.REJECT_MESSAGE.format(reason="conversation history is kept by Palisade, "
+                                                            "so send conversation_id instead of past turns"), 400)
+            try:
+                conv = conversations.open(body.conversation_id)
+            except H.ConversationError as e:
+                return _json(e.status, {"error": e.message, "code": e.code})
+            info["conversation"] = conv.ref
+            info["turn"] = sum(1 for t in conv.turns if t.role == "user") + 1
 
-        # 2. generation
-        if decision != "blocked_input":
-            msgs = [{"role": "system", "content": gen["system_prompt"].strip()}]
-            msgs += [m for m in body.history if m.get("role") in ("user", "assistant")][-20:]
-            msgs.append({"role": "user", "content": prompt})
-            r = client.post(f"{base_url}/v1/chat/completions", json={
-                "messages": msgs,
-                "temperature": gen.get("temperature", 0.4),
-                "max_tokens": gen.get("max_tokens", 1024),
-                "stream": False,
-            })
-            if r.status_code != 200:
-                raise HTTPException(502, f"base model error: {r.text[:200]}")
-            response_text = r.json()["choices"][0]["message"]["content"]
+            with conversations.hold(conv), gate.slot():
+                cleaned = H.canonicalize(raw_prompt)
+                prompt = cleaned.text.strip()
+                if cleaned.changed:
+                    info["input_cleaned"] = cleaned.summary()
+                    info["raw_prompt_sha256"] = sha256_text(raw_prompt)
+                    if retain_full:
+                        info["raw_prompt"] = raw_prompt
+                if not prompt:
+                    raise H.HarnessStop("rejected", "message was empty after removing hidden characters "
+                                        "and control tokens",
+                                        H.REJECT_MESSAGE.format(reason="nothing was left after removing hidden "
+                                                                "characters and control tokens"), 400)
 
-            # 3. output check
-            if settings["guardian"].get("check_output", True):
-                v_out = guardian.check("output", policy, prompt, response_text)
-                verdicts.append(v_out)
-                if v_out.violated and v_out.action == "block":
-                    decision = "blocked_output"
-                    response_text = policy.block_message
-                elif v_out.violated and v_out.action == "flag" and decision == "answered":
+                msg_limit, context_budget = _budgets()
+                n_tokens = _inspect(prompt, "input")
+                info["input_tokens"] = n_tokens
+                if n_tokens > msg_limit:
+                    raise H.HarnessStop("rejected", f"message is {n_tokens} tokens; limit is {msg_limit}",
+                                        H.REJECT_MESSAGE.format(reason=f"it is {n_tokens} tokens long and the "
+                                                                f"limit is {msg_limit}"), 413)
+
+                # 1. input screening: the message, then the recent conversation together
+                if gcfg.get("check_input", True):
+                    v_in = guardian.check("input", policy, prompt)
+                    verdicts.append(v_in)
+                    if v_in.violated and v_in.action == "block":
+                        decision = "blocked_input"
+                    elif v_in.violated and v_in.action == "flag":
+                        decision = "flagged"
+                    prior = conv.user_turns(hcfg["conversation_window"])
+                    if (decision != "blocked_input" and hcfg["check_conversation"] and prior):
+                        joined = "\n\n".join(prior + [prompt])
+                        v_conv = guardian.check("input", policy, joined)
+                        v_conv.note = (v_conv.note + "; " if v_conv.note else "") + \
+                            f"conversation: last {len(prior) + 1} messages together"
+                        verdicts.append(v_conv)
+                        if v_conv.violated and v_conv.action == "block":
+                            decision = "blocked_input"
+                            info["reason"] = "the conversation as a whole violates policy"
+                        elif v_conv.violated and v_conv.action == "flag" and decision == "answered":
+                            decision = "flagged"
+                if cleaned.suspicious and decision == "answered":
                     decision = "flagged"
+                    info.setdefault("reason", "hidden characters or control tokens were removed from the message")
 
-        # 4. audit
+                # 2. generation, with server-held history trimmed to the token budget
+                if decision != "blocked_input":
+                    history = H.build_context(conv, context_budget - n_tokens - H.TEMPLATE_OVERHEAD_TOKENS,
+                                              hcfg["max_history_turns"])
+                    info["context_turns"] = len(history)
+                    msgs = [{"role": "system", "content": canary.system_prompt}]
+                    msgs += [{"role": t.role, "content": t.content} for t in history]
+                    msgs.append({"role": "user", "content": prompt})
+                    try:
+                        r = client.post("/v1/chat/completions", json={
+                            "messages": msgs,
+                            "temperature": gen.get("temperature", 0.4),
+                            "max_tokens": max_new,
+                            "stream": False,
+                        })
+                    except Exception as e:
+                        raise H.HarnessStop("error", f"assistant model unreachable: {type(e).__name__}",
+                                            H.ERROR_MESSAGE, 502) from e
+                    if r.status_code != 200:
+                        raise H.HarnessStop("error", f"assistant model returned HTTP {r.status_code}",
+                                            H.ERROR_MESSAGE, 502)
+                    try:
+                        choice = r.json()["choices"][0]
+                        raw_answer = choice["message"].get("content") or ""
+                    except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
+                        raise H.HarnessStop("error", "assistant model returned an unreadable answer",
+                                            H.ERROR_MESSAGE, 502) from e
+                    info["finish_reason"] = choice.get("finish_reason")
+
+                    # 3. output: clean-up, probe, leak check, then the guardian
+                    out = H.canonicalize(raw_answer, nfkc=False)
+                    response_text = out.text
+                    if out.changed:
+                        info["output_cleaned"] = out.summary()
+                        info["raw_response_sha256"] = sha256_text(raw_answer)
+                    out_tokens = _inspect(response_text, "output") if response_text else 0
+                    leak = canary.leaked(response_text)
+                    if leak:
+                        raise H.HarnessStop("blocked_output", f"answer disclosed the {leak.replace('_', ' ')}",
+                                            policy.block_message)
+                    if gcfg.get("check_output", True):
+                        v_out = guardian.check("output", policy, prompt, H.screening_text(response_text))
+                        verdicts.append(v_out)
+                        if v_out.violated and v_out.action == "block":
+                            decision = "blocked_output"
+                        elif v_out.violated and v_out.action == "flag" and decision == "answered":
+                            decision = "flagged"
+
+                    if decision in ("answered", "flagged"):
+                        conv.turns.append(H.Turn("user", prompt, n_tokens))
+                        conv.turns.append(H.Turn("assistant", response_text, out_tokens))
+                if decision.startswith("blocked") or cleaned.suspicious:
+                    conversations.record_block(conv)
+                if decision.startswith("blocked"):
+                    response_text = policy.block_message
+
+        except H.Busy as e:
+            with lock_mutex:
+                session["busy_refused"] += 1
+            return _json(429, {"error": str(e), "code": "busy"}, {"Retry-After": str(e.retry_after)})
+        except H.ConversationError as e:
+            return _json(e.status, {"error": e.message, "code": e.code})
+        except H.HarnessStop as e:
+            decision, response_text, status_code = e.decision, e.public, e.status
+            info["reason"] = e.reason
+            if decision.startswith("blocked") and conv is not None:
+                conversations.record_block(conv)
+        except (GuardianUnavailable, H.ProbeError) as e:
+            decision, response_text, status_code = "error", H.ERROR_MESSAGE, 503
+            info["reason"] = str(e)
+        except Exception as e:   # anything unexpected: fail closed, and record it
+            decision, response_text, status_code = "error", H.ERROR_MESSAGE, 500
+            info["reason"] = f"internal error: {type(e).__name__}"
+
+        if conv is not None:
+            info["conversation_closed"] = conv.closed
+
+        # 4. audit: every processed request, whatever the outcome
         rec = audit.append(AuditRecord(
             seq=0, ts=utc_now(), request_id=rid, manifest_hash=mhash,
             policy_version=policy.version, base_model=base_model_id,
@@ -401,6 +587,7 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
             latency_ms=int((time.time() - t0) * 1000),
             prompt=prompt if retain_full else None,
             response=response_text if retain_full else None,
+            harness=info or None,
         ))
 
         with lock_mutex:
@@ -410,14 +597,18 @@ def build_app(settings: dict[str, Any], base_url: str, guardian: Guardian,
                 last[v.stage] = {"p": v.p_violation, "violated": v.violated, "action": v.action,
                                  "categories": list(v.categories), "seq": rec.seq}
 
-        return {
+        public_info = {k: info[k] for k in ("reason", "input_cleaned", "output_cleaned", "context_turns",
+                                            "turn", "conversation_closed", "finish_reason") if k in info}
+        return _json(status_code, {
             "request_id": rid,
             "decision": decision,
             "response": response_text,
             "verdicts": [v.__dict__ for v in verdicts],
+            "conversation_id": conv.id if conv is not None and not conv.closed else None,
+            "harness": public_info,
             "audit": {"seq": rec.seq, "hash": rec.hash, "prev_hash": rec.prev_hash},
             "latency_ms": rec.latency_ms,
-        }
+        })
 
     @app.exception_handler(HTTPException)
     def _http_err(_, exc: HTTPException):
@@ -436,6 +627,7 @@ def build_setup_app(settings: dict[str, Any], problems_fn, status_path: Path) ->
     from . import MODE
 
     app = FastAPI(title="Palisade setup", docs_url=None, redoc_url=None)
+    _admission(app, settings, 16)
     token = secrets.token_urlsafe(32)
     require_token = settings["server"].get("require_token", True)
     cache: dict[str, Any] = {"at": 0.0, "problems": []}

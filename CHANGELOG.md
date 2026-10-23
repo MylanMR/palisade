@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0
+
+A model harness: fixed rules around every model call that hold even when the guardian is wrong or down. See `docs/HARNESS.md`.
+
+- **Fail closed.** A guardian or model server that is unreachable, times out, or errors now stops the request and writes an `error` record to the audit chain. Before, these returned a server error with no record. A guardian answer that cannot be read as yes or no, or a guardian prompt the server truncated, now counts as a block; before, a verdict with no readable yes/no scored as allowed.
+- **Role injection closed.** The real llama-server reads chat-template tokens typed into a message (`<end_of_turn>`, `<start_of_turn>system`) as control tokens, which let a message fake a system turn. Messages and answers are now normalized (NFKC) and cleaned of template tokens, invisible format characters, tag characters, and variation-selector runs, and each model's own tokenizer is probed to confirm no control token survived. A survivor blocks the message.
+- **Server-held history.** The browser used to send the whole conversation with each message, unchecked, so a client could write its own "assistant" turns. Palisade now keeps the history itself; clients send a conversation id, and a request carrying history is rejected and recorded. Blocked turns never enter the history, and three blocked or suspicious messages close the conversation.
+- **Multi-message screening.** The guardian also reads the last few user messages together, catching a request split across turns.
+- **Model servers locked to Palisade.** The model servers previously accepted requests from any local program, and from web pages, because llama-server allows any origin by default. They now listen on private Unix sockets (macOS, Linux) or loopback with a port-ownership check (Windows), require a per-launch key, start from a cleaned environment (llama-server reads `LLAMA_ARG_*` variables, one of which enables shell and file tools), and run with the web UI, slots endpoint, downloads, and agent tools off.
+- **Admission checks.** A Host-header allowlist stops DNS-rebinding pages from obtaining the session cookie; state-changing API calls from other origins or marked cross-site are refused; request bodies are capped as they stream in; a rate limit and short queue protect the models.
+- **Token budget.** Exact token counts from the assistant's tokenizer; oversized messages are rejected and old turns dropped to fit. The guardian's context window is sized so a full message and answer always fit.
+- **Canary.** The system prompt carries a random marker per start; an answer containing it, or a long run of the system prompt, is blocked.
+- **Linux service hardening.** No network beyond loopback, no capabilities, kernel and namespace protections. `systemd-analyze security` exposure falls from 8.3 to 3.2.
+- **Visible on the Runtime panel and in the audit chain.** A Harness section lists each control; every record now carries a `harness` section (what was removed, conversation reference, turn, reason). Review page, review log, and filters show the new `rejected` and `error` outcomes.
+- **`palisade harness show` and `palisade harness test`.** The test command runs `eval/harness_cases.yaml` (24 attack and baseline cases) through the full request path against the real models and keeps a report, which the NIST benchmark now uses for MEASURE-2.7.
+- **Live tests against the real model server.** A new CI job fetches the pinned llama-server build, checks its hash, and runs the harness against a tiny generated model.
+- `settings.yaml` gains a `harness:` section with bounded limits, and `server.allowed_hosts` for reverse proxies. Existing installs that lack the section get the same defaults.
+- 39 new tests (126 total), passing on Python 3.9 and 3.13.
+
 ## 0.3.0
 
 Installers for macOS, Windows, and Linux.

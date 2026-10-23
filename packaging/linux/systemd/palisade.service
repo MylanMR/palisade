@@ -21,6 +21,25 @@ ProtectSystem=strict
 ReadWritePaths=/var/lib/palisade/audit /var/lib/palisade/logs /var/lib/palisade/state /var/lib/palisade/eval /var/lib/palisade/compliance
 ProtectHome=yes
 PrivateTmp=yes
+# The assistant needs no network. Only loopback (the web page) and the private model-server
+# sockets are allowed, so neither Palisade nor a model can send anything off the machine.
+# First-run downloads happen in palisade-setup.service, which is not restricted this way.
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

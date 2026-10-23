@@ -31,3 +31,26 @@ jobs:
         run: python -m pytest tests/ -q
       - name: NIST AI RMF benchmark (must run clean)
         run: python -m palisade benchmark
+
+  # The harness against the real model server: the pinned llama-server build (hash-checked
+  # against config/models.yaml) running a tiny generated model. Proves the lockdown flags,
+  # the key, the private sockets, and the tokenizer probe on the actual binary.
+  harness-live:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install (exact versions, hash-verified)
+        run: python -m pip install --disable-pip-version-check --require-hashes -r requirements-harness.lock
+      - name: Fetch the pinned llama-server build (hash-verified)
+        run: |
+          server="$(python packaging/test_llama_server.py "$RUNNER_TEMP/llama")"
+          echo "PALISADE_TEST_LLAMA_SERVER=$server" >> "$GITHUB_ENV"
+      - name: Live harness tests (must run, not skip)
+        env:
+          PALISADE_TEST_REQUIRE_LIVE: "1"
+        run: python -m pytest tests/test_harness_live.py -v

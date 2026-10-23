@@ -140,6 +140,12 @@ Type in the box at the bottom and press Enter (Shift+Enter for a new line). Unde
 | **Answered, flagged for review** | The exchange touched a category set to "flag" (such as personal data). You got the answer, and the record is marked for a reviewer. |
 | **Blocked before reaching the model** | Your message failed the check. The assistant never saw it. |
 | **Answer blocked before display** | The assistant's answer failed the check and was replaced with a refusal. |
+| **Not processed** | The message was refused before any check: too long, or empty once hidden characters were removed. |
+| **Stopped: safety checks could not complete** | A model server or check failed, so Palisade returned nothing from the model. The failure is in the audit log. |
+
+If the note says "Removed from your message," the harness found hidden characters or chat-template tokens (text such as `<start_of_turn>` that can impersonate the system) and took them out before anything else saw the message. Template tokens and hidden tag characters also mark the exchange for review.
+
+Palisade remembers the conversation itself; the browser only holds its name. **New conversation** at the top starts fresh. After three blocked messages in one conversation, Palisade closes it and the next message starts a new one.
 
 The note also shows the **violation likelihood** the guardian assigned (0% to 100%) and the **audit record number** with its hash, a short fingerprint that links to the record before it.
 
@@ -153,6 +159,8 @@ The note also shows the **violation likelihood** the guardian assigned (0% to 10
 - The threshold line says when it blocks, for example "50% or higher."
 - The scale shows where your last message (M) and last answer (A) scored. Markers far to the left of the red line mean comfortable margins.
 - The session line counts messages checked, blocked, and flagged since startup.
+
+**Harness** lists the fixed rules that wrap every model call (docs/HARNESS.md): the Host and origin checks, the rate limit, hidden-character clean-up, the tokenizer probe, server-held history, multi-message screening, the canary, model-server lockdown, and fail-closed handling. Every line should show as on. If a setting in `settings.yaml` was outside its allowed range, a yellow note says what Palisade used instead.
 
 **Policy** shows which policy file is in force, its version, and how many categories block or flag. Open "Categories and actions" to see each rule. A yellow note appears if you are running an unmodified example policy.
 
@@ -461,6 +469,8 @@ The llama-server hash is published per platform (for example, `macos-arm64`). In
 | `bash scripts/bootstrap.sh` | Source checkout: set up, download, and start. Safe to rerun. |
 | `palisade eval` | Test the guardian against labeled examples and report its accuracy. |
 | `palisade benchmark` | Score this installation against the NIST AI Risk Management Framework. |
+| `palisade harness show` | List the harness controls and the limits in effect. |
+| `palisade harness test` | Start the models and run the harness attack cases through the full request path. |
 | `palisade publish-hashes` | Write verified model and binary fingerprints into `models.yaml` (Procedure I). |
 | `palisade audit verify` | Recompute the audit chain. |
 | `palisade audit report` | Write a readable review log. |
@@ -471,7 +481,7 @@ The llama-server hash is published per platform (for example, `macos-arm64`). In
 
 In a source checkout, prefix these with `python -m` after `source .venv/bin/activate`.
 
-In service mode, `install`, `setup`, `import`, and `benchmark` change root-owned files, so run them with `sudo` (on Windows, in an elevated terminal). `eval` starts its own copies of the models on the same ports as the service, so stop the service first (`sudo launchctl bootout system/com.palisade.server` on macOS, `sudo systemctl stop palisade` on Linux, `Stop-Service Palisade` on Windows), run `sudo palisade eval`, then start the service again.
+In service mode, `install`, `setup`, `import`, and `benchmark` change root-owned files, so run them with `sudo` (on Windows, in an elevated terminal). `eval` and `harness test` start their own copies of the models in the same places as the service, so stop the service first (`sudo launchctl bootout system/com.palisade.server` on macOS, `sudo systemctl stop palisade` on Linux, `Stop-Service Palisade` on Windows), run `sudo palisade eval` or `sudo palisade harness test`, then start the service again.
 
 ---
 
@@ -503,6 +513,14 @@ While that session is open, http://127.0.0.1:8080/ on the other computer reaches
 
 **"THESE PACKAGES DO NOT MATCH THE HASHES" during setup.** A Python package downloaded during setup is not the exact file recorded in `requirements.lock`. Stop and try again later or from another network; if it persists, report it (see `SECURITY.md`). Do not bypass it by installing from `requirements.txt`.
 
+**"Rate limit reached" or "The assistant is busy."** Palisade accepts 30 messages a minute and lets a few wait while one is answered. Wait a moment and send again. The limits are under `harness:` in `settings.yaml`.
+
+**"Unrecognized Host header" (HTTP 421).** You reached Palisade by a name other than `127.0.0.1` or `localhost`. Use one of those. Behind a reverse proxy, add the proxy's host name to `server.allowed_hosts` in `settings.yaml`.
+
+**"This conversation has ended or expired."** Conversations are held in memory and end after an hour without use or when Palisade restarts. Send the message again to start a new one.
+
+**"Model server could not use its private socket; retrying on 127.0.0.1" at startup.** Palisade fell back to a loopback port with a per-launch key. It works and keeps other accounts out. Please report it as an issue with the server log from `logs/`, since the socket is the stronger arrangement.
+
 **The panel shows "Not responding."** A model server stopped. Check `logs/base-server.log` or `logs/guardian-server.log` in the data folder (Part 3 table), then restart Palisade.
 
 **Answers take a very long time.** The models are running on the processor. On a Mac in service mode, see Part 3, "Confirm service mode works," step 4.
@@ -522,6 +540,7 @@ A fresh install or clone is locked down before anyone changes a setting:
 - It listens only on this machine (`127.0.0.1`) and refuses to start on a network address unless you explicitly opt in.
 - Every API call needs a session token, and audit review needs a separate reviewer token.
 - Messages are stored in the audit log as fingerprints, not text.
+- A fixed-rule harness wraps every model call: hidden characters and chat-template tokens are removed and checked against each model's own tokenizer, history is held by Palisade, the system prompt carries a canary, and any failed check stops the request. The model servers accept requests only from Palisade (a private socket and a per-launch key), and on Linux the service has no network access beyond the machine itself.
 - Python packages install at exact versions and are checked against recorded hashes; models and the model server are checked against published hashes where they exist, and against their recorded fingerprints on every start.
 - Audit files are readable only by their owner and the audit group.
 - Released installers are signed (Apple Developer ID with notarization, Authenticode on Windows, OpenPGP on Linux), built only by the repository's release workflow, and published with checksums and build-provenance attestations. Every executable and library inside them is signed too, and Palisade's startup check covers the signed files.
@@ -547,6 +566,7 @@ Stating the limits plainly is part of making the audit trail trustworthy.
 - `docs/SERVICE-INSTALL.md`: exactly what each installer creates, with owners and permissions
 - `packaging/SIGNING.md`: how releases are built, signed, notarized, and verified
 - `packaging/windows/README.md`: Windows installer details and WiX licensing
+- `docs/HARNESS.md`: the fixed rules around every model call, and how they are tested
 - `docs/ARCHITECTURE.md`: how requests flow and why the design is shaped this way
 - `docs/MODELS.md`: model choices, provenance, and licenses
 - `docs/COMPLIANCE.md`: the NIST AI RMF crosswalk and benchmark

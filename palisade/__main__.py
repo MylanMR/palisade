@@ -6,6 +6,7 @@
   python -m palisade verify
   python -m palisade eval [--cases eval/cases.jsonl]
   python -m palisade benchmark
+  python -m palisade harness show | test [--no-model-cases]
   python -m palisade audit report [--decision D] [--include-content] [--out FILE]
   python -m palisade audit anchor [--out FILE]
   python -m palisade audit check-anchor FILE
@@ -112,19 +113,41 @@ def _start_stack(settings, manifest, host, tier):
     ctx = settings["runtime"]["context_tokens"]
     base = LlamaProcess("base", binary, model_path(t["base"], manifest),
                         settings["runtime"]["base_port"], host, settings, ctx)
+    # The guardian reads the policy text plus a whole message and a whole answer. Size its
+    # window so that always fits; a truncated prompt would leave text unscreened.
     guard = LlamaProcess("guardian", binary, model_path(t["guardian"], manifest),
-                         settings["runtime"]["guardian_port"], host, settings, min(ctx, 4096))
+                         settings["runtime"]["guardian_port"], host, settings, min(ctx + 2048, 8192))
     for p in (base, guard):
-        print(f"starting {p.name}: {' '.join(p.cmd[1:5])} ...")
+        print(f"starting {p.name} model server ({p.endpoint.transport}) ...")
         p.start()
     timeout = settings["runtime"]["startup_timeout_seconds"]
+    procs = {"base": base, "guardian": guard}
+    for name, p in list(procs.items()):
+        try:
+            p.wait_healthy(timeout)
+        except RuntimeError as e:
+            if p.sock is None or "exited early" not in str(e):
+                raise
+            # A server that cannot listen on its private socket gets one retry on loopback,
+            # still behind its per-launch key and the port-ownership check. Said out loud,
+            # and shown on the Runtime panel, because it is a weaker arrangement.
+            print(f"{name} model server could not use its private socket ({e}); retrying on 127.0.0.1")
+            p.stop()
+            p = LlamaProcess(name, binary, p.model, p.port, host, settings,
+                             int(p.cmd[p.cmd.index("--ctx-size") + 1]), use_socket=False)
+            p.start()
+            p.wait_healthy(timeout)
+            procs[name] = p
+    base, guard = procs["base"], procs["guardian"]
     for p in (base, guard):
-        p.wait_healthy(timeout)
-        print(f"{p.name} ready on {p.url}")
+        print(f"{p.name} ready" + (f" on 127.0.0.1:{p.port}" if p.sock is None else ""))
 
     gcfg = settings["guardian"]
-    guardian = Guardian(guard.url, t["guardian"], manifest["models"][t["guardian"]],
-                        mode=gcfg.get("mode", "combined"), threshold=float(gcfg.get("threshold", 0.5)))
+    from .harness import harness_config
+    hcfg, _ = harness_config(settings)
+    guardian = Guardian(guard.endpoint, t["guardian"], manifest["models"][t["guardian"]],
+                        mode=gcfg.get("mode", "combined"), threshold=float(gcfg.get("threshold", 0.5)),
+                        timeout=float(hcfg["guardian_timeout_seconds"]))
     return base, guard, guardian, t
 
 
@@ -157,9 +180,12 @@ def cmd_run(args):
         settings, manifest = load_settings(), load_models()
         host, tier = _tier(settings, manifest)
 
+    from .harness import harness_config
+    for note in harness_config(settings)[1]:
+        print(f"harness: {note}")
     base, guard, guardian, t = _start_stack(settings, manifest, host, tier)
     audit = AuditLog(audit_dir(settings), settings["audit"].get("rotate_mb", 64))
-    app = build_app(settings, base.url, guardian, t["base"], audit,
+    app = build_app(settings, base.endpoint, guardian, t["base"], audit,
                     models_cfg=manifest, tier=tier, backend=host.backend)
 
     def _stop(*_):
@@ -384,6 +410,59 @@ def cmd_publish_hashes(args):
     return 0
 
 
+def cmd_harness(args):
+    """`show`: the harness controls and effective limits. `test`: start the models and
+    run eval/harness_cases.yaml through the full request path."""
+    from .harness import harness_config, describe
+    settings = load_settings()
+    cfg, notes = harness_config(settings)
+    if args.action == "show":
+        d = describe(cfg, notes, "private socket" if POSIX else "loopback with key")
+        for c in d["controls"]:
+            state = "on" if c.get("always_on") or c.get("enabled") else "off"
+            print(f"  [{state:>3}] {c['label']}")
+        print("limits:")
+        for k, v in cfg.items():
+            print(f"  {k}: {v}")
+        for n in notes:
+            print(f"note: {n}")
+        return 0
+
+    from fastapi.testclient import TestClient
+    from .server import build_app
+    from . import harness_suite as suite
+    manifest = load_models()
+    host, tier = _tier(settings, manifest)
+    problems = verify_installation(manifest, tier)
+    if problems:
+        print("installation does not match manifest.lock; run `palisade doctor`")
+        return 1
+    # The suite sends many requests quickly; lift only the rate limit for this run.
+    test_settings = json.loads(json.dumps(settings))
+    test_settings.setdefault("harness", {})["rate_per_minute"] = 600
+    base, guard, guardian, t = _start_stack(settings, manifest, host, tier)
+    try:
+        audit = AuditLog(audit_dir(settings), settings["audit"].get("rotate_mb", 64))
+        app = build_app(test_settings, base.endpoint, guardian, t["base"], audit, models_cfg=manifest,
+                        tier=tier, backend=host.backend, record_source="harness-test")
+        client = TestClient(app, base_url=suite.LOCAL)
+        client.get("/")
+        rep = suite.run_suite(client, suite.load_cases(include_model_cases=not args.no_model_cases))
+    finally:
+        base.stop(); guard.stop()
+    for r in rep["results"]:
+        print(f"{'PASS' if r['passed'] else 'FAIL'} {r['id']:24} {r['layer']:13} "
+              f"{r['status']} {r['decision'] or '-'}" + (f"  ({'; '.join(r['failures'])})" if r["failures"] else ""))
+    print(f"\n{rep['passed']} of {rep['cases']} passed")
+    out = suite.write_report(rep, DATA_DIR / "eval", {
+        "type": "palisade-harness-test", "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "palisade_version": __version__, "manifest_hash": manifest_hash(read_lock()),
+        "base_model": t["base"], "guardian_model": t["guardian"], "limits": cfg,
+        "note": "rate_per_minute raised to 600 for this run only; audit records are tagged source=harness-test"})
+    print(f"report: {out}")
+    return 0 if rep["failed"] == 0 else 2
+
+
 def cmd_benchmark(args):
     """Score the installation against the NIST AI RMF catalog."""
     from compliance.nist_ai_rmf import benchmark as bm
@@ -460,12 +539,18 @@ def main(argv=None):
     ip.add_argument("folder")
     e = sub.add_parser("eval"); e.add_argument("--cases", default=str(ROOT / "eval" / "cases.jsonl"))
     sub.add_parser("benchmark")
+    hp = sub.add_parser("harness", help="show the harness controls, or test them against the running models")
+    hsub = hp.add_subparsers(dest="action", required=True)
+    hsub.add_parser("show", help="list the controls and effective limits")
+    ht = hsub.add_parser("test", help="start the models and run eval/harness_cases.yaml through the full path")
+    ht.add_argument("--no-model-cases", action="store_true", help="skip cases whose outcome depends on model judgment")
     ph = sub.add_parser("publish-hashes", help="write verified fingerprints from manifest.lock into models.yaml")
     ph.add_argument("--dry-run", action="store_true", help="print the result instead of writing it")
     a = sub.add_parser("audit", help="review-side audit commands")
     asub = a.add_subparsers(dest="action", required=True)
     r = asub.add_parser("report", help="write a plain-text review log from the chain")
-    r.add_argument("--decision", choices=["answered", "flagged", "blocked", "blocked_input", "blocked_output"])
+    r.add_argument("--decision", choices=["answered", "flagged", "blocked", "blocked_input", "blocked_output",
+                                         "rejected", "error"])
     r.add_argument("--include-content", action="store_true",
                    help="include prompt/response text where retain_content is full")
     r.add_argument("--out", help="output file (default: ./audit-review-<time>.log, '-' for stdout)")
@@ -481,7 +566,7 @@ def main(argv=None):
     if MODE == "desktop":
         ensure_config()      # a person's first command creates their config from the defaults
     return {"install": cmd_install, "run": cmd_run, "doctor": cmd_doctor,
-            "verify": cmd_verify, "eval": cmd_eval, "benchmark": cmd_benchmark,
+            "verify": cmd_verify, "eval": cmd_eval, "benchmark": cmd_benchmark, "harness": cmd_harness,
             "audit": cmd_audit, "publish-hashes": cmd_publish_hashes,
             "setup": cmd_setup, "open": cmd_open, "import": cmd_import}[args.cmd](args)
 

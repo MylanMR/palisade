@@ -18,7 +18,12 @@
   .who { font-size: 13px; color: var(--muted); margin-bottom: 3px; }
   .text { white-space: pre-wrap; overflow-wrap: anywhere; }
   .ledger { margin-top: 8px; padding: 6px 0 6px 12px; border-left: 3px solid var(--ok); font-size: 13px; color: var(--muted); }
-  .ledger.flagged { border-color: var(--flag); } .ledger.blocked_input, .ledger.blocked_output { border-color: var(--block); }
+  .ledger.flagged, .ledger.rejected { border-color: var(--flag); } .ledger.blocked_input, .ledger.blocked_output, .ledger.error { border-color: var(--block); }
+  .note { margin: 0 0 24px; font-size: 13px; color: var(--muted); max-width: 72ch; }
+  header .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  header .row button { font-size: 12.5px; padding: 4px 10px; }
+  ul.ctrl { list-style: none; padding: 0; margin: 6px 0 0; }
+  ul.ctrl li { font-size: 13px; margin: 3px 0; }
   .ledger strong { color: var(--ink); display: block; margin-bottom: 2px; }
   .empty { color: var(--muted); max-width: 62ch; }
   form { display: flex; gap: 10px; padding: 14px 28px 18px; border-top: 1px solid var(--rule); background: var(--panel); }
@@ -65,7 +70,7 @@
   ol.chain li::before { content: ""; position: absolute; left: -15px; top: 12px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ok); background: var(--panel); }
   ol.chain li.head { border-color: var(--ok); background: var(--ok-bg); }
   ol.chain li.head::before { background: var(--ok); }
-  ol.chain li.flagged::before { border-color: var(--flag); } ol.chain li.blocked_input::before, ol.chain li.blocked_output::before { border-color: var(--block); }
+  ol.chain li.flagged::before, ol.chain li.rejected::before { border-color: var(--flag); } ol.chain li.blocked_input::before, ol.chain li.blocked_output::before, ol.chain li.error::before { border-color: var(--block); }
   .rec-top { display: flex; justify-content: space-between; gap: 6px; }
   .rec-links { color: var(--muted); }
   .rec-links code { font-size: 11.5px; }
@@ -75,7 +80,7 @@
 <div class="app">
   <main>
     <header>
-      <h1>Palisade</h1>
+      <div class="row"><h1>Palisade</h1><button type="button" id="new-conv">New conversation</button></div>
       <p>A local assistant. Each message and each answer is checked against the content policy before you see it, and every exchange is written to a tamper-evident audit log.</p>
     </header>
     <div id="log" aria-live="polite">
@@ -107,6 +112,14 @@
       <div class="line muted small" id="g-last">No messages checked yet.</div>
       <div class="line small" id="g-session"></div>
       <details><summary>Provenance</summary><dl id="g-prov"></dl></details>
+    </section>
+
+    <section id="s-harness">
+      <div class="sec-head"><h2>Harness</h2><span id="h-status"></span></div>
+      <div class="line muted small">Fixed rules around every model call. They hold even if the guardian is wrong or down.</div>
+      <ul class="ctrl" id="h-controls"></ul>
+      <div id="h-notes"></div>
+      <div class="line small muted" id="h-live"></div>
     </section>
 
     <section id="s-policy">
@@ -145,7 +158,7 @@
 <script src="/static/shared.js"></script>
 <script>
 const log = $('#log'), form = $('#f'), msg = $('#msg'), send = $('#send');
-const history = [];
+let conversationId = null;     // the server holds the history; this only names it
 const sessionChain = [];     // records produced in this browser session, newest last
 let runtime = null;
 
@@ -201,6 +214,26 @@ function renderLast(session) {
   const c = (session && session.counts) || {};
   const blocked = (c.blocked_input || 0) + (c.blocked_output || 0);
   $('#g-session').textContent = `This session: ${c.messages || 0} checked, ${blocked} blocked, ${c.flagged || 0} flagged.`;
+}
+
+function renderHarness(h) {
+  if (!h) return;
+  const ul = clear($('#h-controls'));
+  let off = 0;
+  for (const c of h.controls) {
+    const on = c.always_on || c.enabled;
+    if (!on) off++;
+    ul.append(el('li', {}, on ? statusEl('ok', c.label) : statusEl('warn', c.label)));
+  }
+  clear($('#h-status')).append(off ? statusEl('warn', `${off} optional check off`) : statusEl('ok', 'All checks on'));
+  const n = clear($('#h-notes'));
+  for (const a of h.adjustments || []) n.append(el('div', { class: 'notice' }, a));
+  renderHarnessLive(h.live);
+}
+function renderHarnessLive(l) {
+  l = l || {};
+  $('#h-live').textContent = `${l.conversations || 0} open conversation${l.conversations === 1 ? '' : 's'}; ` +
+    `${l.rate_limited || 0} refused by the rate limit, ${l.busy_refused || 0} while busy.`;
 }
 
 function renderPolicy(p) {
@@ -280,11 +313,23 @@ function addTurn(who, text) {
   log.append(t); log.scrollTop = log.scrollHeight;
   return t;
 }
+const CLEAN_TEXT = { control_token: 'template tokens', format_character: 'invisible characters',
+  tag_character: 'hidden tag characters', variation_selector: 'variation selectors', selector_run: 'selector runs',
+  control_character: 'control characters', private_use: 'private-use characters', nfkc: 'look-alike characters normalized' };
+function cleanedText(c) {
+  return Object.entries(c || {}).map(([k, v]) => k === 'nfkc' ? CLEAN_TEXT.nfkc : `${v} ${CLEAN_TEXT[k] || k}`).join(', ');
+}
 function ledger(turn, r) {
-  const scores = r.verdicts.map(v => `${v.stage === 'input' ? 'message' : 'answer'} ${pct(v.p_violation)}` +
+  const scores = r.verdicts.map(v => `${v.stage === 'input' ? (v.note && v.note.includes('conversation') ? 'conversation' : 'message') : 'answer'} ${pct(v.p_violation)}` +
     (v.categories.length ? ` (${v.categories.map(catName).join(', ')})` : ''));
+  const h = r.harness || {};
+  const harnessLines = [];
+  if (h.reason) harnessLines.push(el('div', {}, `Harness: ${h.reason}.`));
+  if (h.input_cleaned) harnessLines.push(el('div', {}, `Removed from your message: ${cleanedText(h.input_cleaned)}.`));
+  if (h.output_cleaned) harnessLines.push(el('div', {}, `Removed from the answer: ${cleanedText(h.output_cleaned)}.`));
   turn.append(el('div', { class: 'ledger ' + r.decision },
     el('strong', {}, DECISION_TEXT[r.decision] || r.decision),
+    ...harnessLines,
     el('div', {}, `Violation likelihood: ${scores.join(', ') || 'not checked'}. Took ${(r.latency_ms / 1000).toFixed(1)} s.`),
     el('div', {}, `Logged as record ${r.audit.seq}, hash `, el('code', { title: r.audit.hash }, short(r.audit.hash)),
       ', linked to ', el('code', { title: r.audit.prev_hash }, short(r.audit.prev_hash)), '.')));
@@ -296,21 +341,42 @@ form.addEventListener('submit', async e => {
   addTurn('You', text);
   const turn = addTurn('Assistant', 'Checking and answering…');
   try {
-    const r = await api('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, history }) });
+    let r;
+    try {
+      r = await api('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, conversation_id: conversationId }) });
+    } catch (err) {
+      if (!(err.body && err.body.decision)) throw err;
+      r = err.body;            // a recorded outcome (rejected or stopped): show it like any other
+    }
     turn.querySelector('.text').textContent = r.response;
     ledger(turn, r);
-    history.push({ role: 'user', content: text });
-    if (r.decision === 'answered' || r.decision === 'flagged') history.push({ role: 'assistant', content: r.response });
+    conversationId = r.conversation_id || null;
+    if (r.harness && r.harness.conversation_closed) note('This conversation was closed after repeated blocked messages. The next message starts a new one.');
     sessionChain.push({ seq: r.audit.seq, hash: r.audit.hash, prev_hash: r.audit.prev_hash, decision: r.decision });
     await refreshHealth();
     await verifyChain();
   } catch (err) {
     const t = turn.querySelector('.text');
-    t.textContent = err.status === 502 ? 'The assistant model did not answer. Check that it shows Running in the panel, then try again.'
-      : `Request failed: ${err.message}`;
+    const code = err.body && err.body.code;
+    if (code === 'conversation_expired' || code === 'conversation_closed') {
+      conversationId = null;
+      t.textContent = err.message + '. Send your message again to start a new conversation.';
+    } else if (err.status === 429) {
+      t.textContent = err.message + '. Your message was not processed; try again shortly.';
+    } else {
+      t.textContent = `Request failed: ${err.message}`;
+    }
     t.style.color = 'var(--block)';
   } finally { send.disabled = false; msg.focus(); }
+});
+function note(text) {
+  log.append(el('p', { class: 'note' }, text)); log.scrollTop = log.scrollHeight;
+}
+$('#new-conv').addEventListener('click', () => {
+  conversationId = null;
+  clear(log).append(el('p', { class: 'empty' }, 'New conversation. Earlier messages are no longer sent to the model.'));
+  msg.focus();
 });
 msg.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
 
@@ -320,6 +386,7 @@ async function refreshHealth() {
     const h = await api('/api/health');
     health($('#a-health'), h.assistant); health($('#g-health'), h.guardian);
     renderLast(h.session);
+    renderHarnessLive(h.harness_live);
   } catch { clear($('#a-health')).append(statusEl('warn', 'Unknown')); clear($('#g-health')).append(statusEl('warn', 'Unknown')); }
 }
 (async () => {
@@ -327,6 +394,7 @@ async function refreshHealth() {
     runtime = await api('/api/status');
     renderAssistant(runtime.assistant);
     renderGuardian(runtime.guardian, runtime.session);
+    renderHarness(runtime.harness);
     renderPolicy(runtime.policy);
     renderManifestSummary(runtime.manifest);
     renderChain(runtime.audit);

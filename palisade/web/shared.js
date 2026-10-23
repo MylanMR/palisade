@@ -18,7 +18,7 @@ async function api(path, opts) {
   const res = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts));
   const type = res.headers.get('content-type') || '';
   const body = type.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) { const e = new Error((body && body.error) || res.statusText); e.status = res.status; throw e; }
+  if (!res.ok) { const e = new Error((body && body.error) || res.statusText); e.status = res.status; e.body = body; throw e; }
   return body;
 }
 function copyButton(value, label = 'Copy') {
@@ -37,6 +37,7 @@ function statusEl(kind, text) { return el('span', { class: 'status ' + kind }, t
 const DECISION_TEXT = {
   answered: 'Answered', flagged: 'Answered, flagged for review',
   blocked_input: 'Blocked before reaching the model', blocked_output: 'Answer blocked before display',
+  rejected: 'Not processed', error: 'Stopped: safety checks could not complete',
 };
 function pct(p) { return Math.round(Number(p || 0) * 100) + '%'; }
 

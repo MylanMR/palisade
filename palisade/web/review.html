@@ -69,6 +69,8 @@
         <button type="button" data-f="flagged" aria-pressed="false">Flagged</button>
         <button type="button" data-f="blocked" aria-pressed="false">Blocked</button>
         <button type="button" data-f="answered" aria-pressed="false">Answered</button>
+        <button type="button" data-f="rejected" aria-pressed="false">Rejected</button>
+        <button type="button" data-f="error" aria-pressed="false">Stopped</button>
       </div>
       <div class="exports">
         <label><input type="checkbox" id="incl"> Include message text</label>
@@ -111,6 +113,12 @@ function row(r) {
     el('td', {}, r.policy_version),
     el('td', {}, hashLine(r.hash)));
   const rows = [tr];
+  const h = r.harness || {};
+  const notes = [h.reason, h.input_cleaned && ('message cleaned: ' + Object.entries(h.input_cleaned).map(([k, v]) => `${k} ${v}`).join(', ')),
+    h.output_cleaned && ('answer cleaned: ' + Object.entries(h.output_cleaned).map(([k, v]) => `${k} ${v}`).join(', ')),
+    ...(r.verdicts || []).map(v => v.note).filter(Boolean), h.source && ('source: ' + h.source)].filter(Boolean);
+  if (notes.length) rows.push(el('tr', { class: r.decision }, el('td', {}), el('td', { colspan: 7 },
+    el('div', { class: 'content muted small' }, 'Harness: ', notes.join('; ')))));
   if (r.prompt || r.response) rows.push(el('tr', { class: r.decision }, el('td', {}), el('td', { colspan: 7 },
     el('div', { class: 'content' }, 'Message: ', r.prompt || ''), el('div', { class: 'content' }, 'Answer: ', r.response || ''))));
   return rows;

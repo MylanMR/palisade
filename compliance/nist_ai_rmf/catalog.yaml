@@ -126,8 +126,11 @@ controls:
   - id: MEASURE-2.7
     intent: Security and resilience (including adversarial input) are evaluated.
     method: auto
-    check: prompt_injection_covered
-    palisade: A prompt_injection category screens input; startup refuses to run on manifest mismatch.
+    check: adversarial_harness
+    palisade: >
+      A fixed-rule harness wraps every model call (token clean-up, tokenizer probe, server-held
+      history, canary, locked model servers, fail closed), a prompt_injection category screens
+      input, and `palisade harness test` runs the attack cases and keeps the report.
 
   - id: MEASURE-2.8
     intent: Model transparency and accountability mechanisms are in place.
