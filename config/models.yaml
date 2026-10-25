@@ -81,6 +81,7 @@ models:
     license: Apache-2.0
     repo: lmstudio-community/gemma-4-E4B-it-GGUF
     file: gemma-4-E4B-it-Q4_K_M.gguf
+    sha256: 0ffb122c8b6921f13cbc34186e052524d0b5803b17f4867b7197a561400b3770
     # No published hash yet: run packaging/hf_hashes.py --write where huggingface.co is reachable.
     approx_gb: 5.3
     notes: Best fit for CPU-only 16 GB machines.
@@ -126,6 +127,7 @@ models:
     license: Gemma Terms of Use
     repo: mradermacher/shieldgemma-9b-GGUF
     file: shieldgemma-9b.Q8_0.gguf
+    sha256: b6f0fa886c6a79a5440eb572f371971862ce513f1070323f276e0b7c436f4243
     # No published hash yet: run packaging/hf_hashes.py --write where huggingface.co is reachable.
     approx_gb: 9.9
     adapter: yes_no
