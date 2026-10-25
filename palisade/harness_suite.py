@@ -68,9 +68,16 @@ def run_case(client: Any, case: dict, origin: str = LOCAL) -> dict:
             body = {}
         conv = body.get("conversation_id") or conv
     fails = _check(case, status, body)
+    # Scores and the start of the answer, so a failure can be diagnosed from the report. The
+    # prompts are the test's own; the excerpt is kept short because a failed case may mean
+    # the model wrote something the policy forbids.
     return {"id": case["id"], "layer": case.get("layer"), "passed": not fails, "failures": fails,
             "status": status, "decision": body.get("decision"),
-            "reason": (body.get("harness") or {}).get("reason")}
+            "reason": (body.get("harness") or {}).get("reason"),
+            "scores": [{"stage": v.get("stage"), "p": v.get("p_violation"), "mode": v.get("mode"),
+                        "categories": v.get("categories"), "note": v.get("note", "")}
+                       for v in body.get("verdicts") or []],
+            "answer_excerpt": (body.get("response") or "")[:300]}
 
 
 def run_suite(client: Any, cases: list[dict]) -> dict:

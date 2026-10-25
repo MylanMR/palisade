@@ -62,6 +62,7 @@ DEFAULTS: dict[str, Any] = {
     "conversation_idle_minutes": 60,
     "max_conversations": 32,
     "max_body_kb": 256,
+    "recheck_above": 0.05,             # combined score that triggers a per-category recheck
 }
 
 # Settings are clamped to these. A value outside is replaced by the nearest bound and
@@ -79,6 +80,7 @@ BOUNDS: dict[str, tuple[float, float]] = {
     "conversation_idle_minutes": (1, 1440),
     "max_conversations": (1, 512),
     "max_body_kb": (4, 4096),
+    "recheck_above": (0.0, 0.5),
 }
 
 TEMPLATE_OVERHEAD_TOKENS = 8           # role markers per turn
@@ -97,14 +99,15 @@ def harness_config(settings: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
             cfg[k] = bool(v)
             continue
         try:
-            num = int(v)
+            num = float(v) if isinstance(DEFAULTS[k], float) else int(v)
         except (TypeError, ValueError):
             notes.append(f"harness.{k}={v!r} is not a number; using {DEFAULTS[k]}")
             continue
         lo, hi = BOUNDS[k]
         if num < lo or num > hi:
-            clamped = int(min(max(num, lo), hi))
-            notes.append(f"harness.{k}={num} is outside {int(lo)} to {int(hi)}; using {clamped}")
+            clamped = min(max(num, lo), hi)
+            clamped = clamped if isinstance(DEFAULTS[k], float) else int(clamped)
+            notes.append(f"harness.{k}={num} is outside {lo:g} to {hi:g}; using {clamped}")
             num = clamped
         cfg[k] = num
     return cfg, notes
@@ -203,6 +206,22 @@ def canonicalize(text: str, nfkc: bool = True) -> Cleaned:
     return Cleaned(out, removed, normalized)
 
 
+# Instruction-override phrasing. ShieldGemma is trained on harmful-content categories and
+# scores these low, so a fixed rule marks them for review. They are flagged, never blocked
+# on phrasing alone, because people also discuss these techniques legitimately.
+OVERRIDE_PATTERNS = [
+    ("ignore_instructions", r"\b(ignore|disregard|forget|override|bypass)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all|your|system|safety)\b[^.\n]{0,20}\b(instructions?|rules|prompts?|guidelines|restrictions|polic(y|ies))"),
+    ("unrestricted_mode", r"\b(developer|dev|god|jailbreak|unrestricted|unfiltered|dan)\s+mode\b|\bno (restrictions|rules|limits|filters)\b|\bdo anything now\b"),
+    ("reveal_prompt", r"\b(reveal|print|show|repeat|output|display)\b[^.\n]{0,40}\b(system prompt|hidden (instructions|prompt)|initial instructions|instructions above|everything above)"),
+    ("impersonation", r"\b(i am|i'm|this is) (your|the) (developer|administrator|admin|creator|system)\b|^\s*(system|admin)\s*:"),
+]
+_OVERRIDE = [(name, re.compile(p, re.IGNORECASE | re.MULTILINE)) for name, p in OVERRIDE_PATTERNS]
+
+
+def override_phrases(text: str) -> list[str]:
+    return [name for name, rx in _OVERRIDE if rx.search(text)]
+
+
 def screening_text(text: str) -> str:
     """What the guardian reads for an answer: the delivered text, normalized, so look-alike
     characters cannot hide content from the classifier."""
@@ -296,6 +315,7 @@ class Conversation:
     created: float
     last_used: float
     turns: list[Turn] = field(default_factory=list)
+    attempts: list[str] = field(default_factory=list)   # every screened user message, blocked ones too
     blocks: int = 0
     closed: bool = False
     busy: threading.Lock = field(default_factory=threading.Lock)
@@ -308,7 +328,9 @@ class Conversation:
         return hashlib.sha256(self.id.encode()).hexdigest()[:16]
 
     def user_turns(self, n: int) -> list[str]:
-        return [t.content for t in self.turns if t.role == "user"][-n:] if n else []
+        """The last n user messages for conversation screening. Blocked messages are
+        included: they never reach the model, but they show where the conversation is going."""
+        return self.attempts[-n:] if n else []
 
 
 class Conversations:
@@ -577,6 +599,10 @@ def describe(cfg: dict[str, Any], notes: list[str], transport: str) -> dict[str,
                                              if cfg["check_conversation"] and cfg["conversation_window"]
                                              else "Multi-message screening is off"),
              "always_on": False, "enabled": bool(cfg["check_conversation"] and cfg["conversation_window"])},
+            {"id": "recheck", "label": (f"Borderline scores (from {cfg['recheck_above']:g}) rechecked per category"
+                                        if cfg["recheck_above"] > 0 else "Per-category recheck is off"),
+             "always_on": False, "enabled": cfg["recheck_above"] > 0},
+            {"id": "override", "label": "Instruction-override phrasing flagged", "always_on": True},
             {"id": "canary", "label": "Canary and system-prompt leak check", "always_on": True},
             {"id": "model_servers", "label": f"Model servers reachable only by Palisade ({transport})",
              "always_on": True},

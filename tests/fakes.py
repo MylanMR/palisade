@@ -110,7 +110,7 @@ class StubGuardian:
     def healthy(self) -> bool:
         return True
 
-    def check(self, stage, policy, prompt, response=""):
+    def check(self, stage, policy, prompt, response="", mode=None):
         from palisade.audit import GuardianVerdict
         from palisade.policy import Policy
         self.calls.append((stage, prompt, response))

@@ -96,14 +96,18 @@ class Guardian:
         return p_pos / total
 
     # ---- public ----
-    def check(self, stage: str, policy: Policy, prompt: str, response: str = "") -> GuardianVerdict:
+    def check(self, stage: str, policy: Policy, prompt: str, response: str = "",
+              mode: str | None = None) -> GuardianVerdict:
+        """`mode` overrides the configured mode for one call; the harness uses it to recheck
+        a borderline combined score one category at a time."""
+        mode = mode or self.mode
         cats = policy.for_stage(stage)
         t0 = time.time()
         if not cats:
-            return GuardianVerdict(stage, self.model_id, self.mode, 0.0, self.threshold, False, [], "allow", 0)
+            return GuardianVerdict(stage, self.model_id, mode, 0.0, self.threshold, False, [], "allow", 0)
 
         try:
-            if self.mode == "per_category":
+            if mode == "per_category":
                 hits: list[Category] = []
                 worst = 0.0
                 for c in cats:
@@ -121,10 +125,10 @@ class Guardian:
                 action = Policy.strongest_action(cats) if violated else "allow"
                 names = []
         except Indeterminate as e:
-            return GuardianVerdict(stage, self.model_id, self.mode, 1.0, self.threshold, True, [],
+            return GuardianVerdict(stage, self.model_id, mode, 1.0, self.threshold, True, [],
                                    "block", int((time.time() - t0) * 1000), note=f"indeterminate: {e.why}")
 
-        return GuardianVerdict(stage, self.model_id, self.mode, round(score, 4), self.threshold,
+        return GuardianVerdict(stage, self.model_id, mode, round(score, 4), self.threshold,
                                violated, names, action, int((time.time() - t0) * 1000))
 
     def healthy(self) -> bool:

@@ -59,3 +59,5 @@ harness:
   conversation_idle_minutes: 60    # history is discarded after this long without use
   max_conversations: 32
   max_body_kb: 256                 # largest request body accepted
+  recheck_above: 0.05              # 0 to 0.5; a combined guardian score at or above this (but under
+                                   # the threshold) is checked again one category at a time. 0 turns it off.

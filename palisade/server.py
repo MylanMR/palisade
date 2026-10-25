@@ -376,6 +376,27 @@ def build_app(settings: dict[str, Any], base: Any, guardian: Guardian,
                                  f'attachment; filename="palisade-anchor-{a["records"]}.json"'})
 
     # ---- harness helpers ----
+    def _screen(stage: str, text: str, response: str = "") -> list:
+        """One guardian check. A combined score that is under the threshold but above
+        recheck_above is checked again one category at a time, because combining every
+        category in one prompt dilutes the classifier's attention."""
+        v = guardian.check(stage, policy, text, response)
+        out = [v]
+        if (not v.violated and guardian.mode == "combined" and hcfg["recheck_above"] > 0
+                and v.p_violation >= hcfg["recheck_above"]):
+            v2 = guardian.check(stage, policy, text, response, mode="per_category")
+            v2.note = (v2.note + "; " if v2.note else "") + f"recheck: combined score {v.p_violation}"
+            out.append(v2)
+        return out
+
+    def _apply(vs: list, decision: str, block_decision: str) -> str:
+        for v in vs:
+            if v.violated and v.action == "block":
+                decision = block_decision
+            elif v.violated and v.action == "flag" and decision == "answered":
+                decision = "flagged"
+        return decision
+
     def _harness_status() -> dict:
         d = H.describe(hcfg, hnotes, base_ep.transport)
         with lock_mutex:
@@ -478,24 +499,28 @@ def build_app(settings: dict[str, Any], base: Any, guardian: Guardian,
 
                 # 1. input screening: the message, then the recent conversation together
                 if gcfg.get("check_input", True):
-                    v_in = guardian.check("input", policy, prompt)
-                    verdicts.append(v_in)
-                    if v_in.violated and v_in.action == "block":
-                        decision = "blocked_input"
-                    elif v_in.violated and v_in.action == "flag":
-                        decision = "flagged"
+                    vs = _screen("input", prompt)
+                    verdicts.extend(vs)
+                    decision = _apply(vs, decision, "blocked_input")
                     prior = conv.user_turns(hcfg["conversation_window"])
                     if (decision != "blocked_input" and hcfg["check_conversation"] and prior):
                         joined = "\n\n".join(prior + [prompt])
-                        v_conv = guardian.check("input", policy, joined)
-                        v_conv.note = (v_conv.note + "; " if v_conv.note else "") + \
-                            f"conversation: last {len(prior) + 1} messages together"
-                        verdicts.append(v_conv)
-                        if v_conv.violated and v_conv.action == "block":
-                            decision = "blocked_input"
+                        vs = _screen("input", joined)
+                        for v in vs:
+                            v.note = (v.note + "; " if v.note else "") + \
+                                f"conversation: last {len(prior) + 1} messages together"
+                        verdicts.extend(vs)
+                        before = decision
+                        decision = _apply(vs, decision, "blocked_input")
+                        if decision == "blocked_input" and before != decision:
                             info["reason"] = "the conversation as a whole violates policy"
-                        elif v_conv.violated and v_conv.action == "flag" and decision == "answered":
-                            decision = "flagged"
+                conv.attempts.append(prompt)
+                overrides = H.override_phrases(prompt)
+                if overrides:
+                    info["override_phrasing"] = overrides
+                    if decision == "answered":
+                        decision = "flagged"
+                        info.setdefault("reason", "instruction-override phrasing: " + ", ".join(overrides))
                 if cleaned.suspicious and decision == "answered":
                     decision = "flagged"
                     info.setdefault("reason", "hidden characters or control tokens were removed from the message")
@@ -541,12 +566,9 @@ def build_app(settings: dict[str, Any], base: Any, guardian: Guardian,
                         raise H.HarnessStop("blocked_output", f"answer disclosed the {leak.replace('_', ' ')}",
                                             policy.block_message)
                     if gcfg.get("check_output", True):
-                        v_out = guardian.check("output", policy, prompt, H.screening_text(response_text))
-                        verdicts.append(v_out)
-                        if v_out.violated and v_out.action == "block":
-                            decision = "blocked_output"
-                        elif v_out.violated and v_out.action == "flag" and decision == "answered":
-                            decision = "flagged"
+                        vs = _screen("output", prompt, H.screening_text(response_text))
+                        verdicts.extend(vs)
+                        decision = _apply(vs, decision, "blocked_output")
 
                     if decision in ("answered", "flagged"):
                         conv.turns.append(H.Turn("user", prompt, n_tokens))
