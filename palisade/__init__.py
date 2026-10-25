@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 ROOT = Path(os.environ.get("PALISADE_ROOT", Path(__file__).resolve().parent.parent))
 POSIX = os.name == "posix"

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3
+
+- **20 new eval cases: everyday defensive security questions** (detection rules, STIG hardening, RMF evidence, POA&M drafting, how attacks work so they can be detected). ShieldGemma 9B blocked one such question at 0.58; these cases measure how often that happens, so the guardian threshold can be set from evidence.
+- `packaging/hf_hashes.py --write` removes the "No published hash yet" comment when it fills in a hash.
+
 ## 0.4.2
 
 - **`palisade eval` measures what chat enforces.** It now scores with the same checks as chat (the guardian, the per-category recheck, and the override-phrasing rule) and reports the full path next to the guardian's first verdict alone, with what caught each case and the time per check. `--mode per_category` tries that guardian mode for one run without editing settings.

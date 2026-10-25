@@ -67,6 +67,7 @@ def main(argv=None) -> int:
             block = re.search(rf"(?m)^  {re.escape(mid)}:\n((?:    .*\n|\s*\n)+)", text)
             body = block.group(1)
             new_body = re.sub(r"(?m)^(    file:.*\n)", rf"\1    sha256: {remote}\n", body, count=1)
+            new_body = re.sub(r"(?m)^    # No published hash yet:.*\n", "", new_body)
             text = text[:block.start(1)] + new_body + text[block.end(1):]
             print(f"ADDED {mid}: {remote}")
         else:
