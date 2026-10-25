@@ -222,6 +222,22 @@ def override_phrases(text: str) -> list[str]:
     return [name for name, rx in _OVERRIDE if rx.search(text)]
 
 
+def screen(guardian: Any, policy: Any, stage: str, text: str, response: str = "",
+           recheck_above: float = DEFAULTS["recheck_above"]) -> list:
+    """One guardian check, plus a per-category recheck when a combined score is under the
+    threshold but at or above recheck_above. Combining every category in one prompt dilutes
+    the classifier. Chat and `palisade eval` both use this, so evaluation measures exactly
+    what enforcement does."""
+    v = guardian.check(stage, policy, text, response)
+    out = [v]
+    if (not v.violated and getattr(guardian, "mode", "") == "combined" and recheck_above > 0
+            and v.p_violation >= recheck_above):
+        v2 = guardian.check(stage, policy, text, response, mode="per_category")
+        v2.note = (v2.note + "; " if v2.note else "") + f"recheck: combined score {v.p_violation}"
+        out.append(v2)
+    return out
+
+
 def screening_text(text: str) -> str:
     """What the guardian reads for an answer: the delivered text, normalized, so look-alike
     characters cannot hide content from the classifier."""

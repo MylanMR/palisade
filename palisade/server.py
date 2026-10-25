@@ -377,17 +377,7 @@ def build_app(settings: dict[str, Any], base: Any, guardian: Guardian,
 
     # ---- harness helpers ----
     def _screen(stage: str, text: str, response: str = "") -> list:
-        """One guardian check. A combined score that is under the threshold but above
-        recheck_above is checked again one category at a time, because combining every
-        category in one prompt dilutes the classifier's attention."""
-        v = guardian.check(stage, policy, text, response)
-        out = [v]
-        if (not v.violated and guardian.mode == "combined" and hcfg["recheck_above"] > 0
-                and v.p_violation >= hcfg["recheck_above"]):
-            v2 = guardian.check(stage, policy, text, response, mode="per_category")
-            v2.note = (v2.note + "; " if v2.note else "") + f"recheck: combined score {v.p_violation}"
-            out.append(v2)
-        return out
+        return H.screen(guardian, policy, stage, text, response, hcfg["recheck_above"])
 
     def _apply(vs: list, decision: str, block_decision: str) -> str:
         for v in vs:

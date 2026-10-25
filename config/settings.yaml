@@ -18,7 +18,8 @@ runtime:
   threads: auto            # auto = physical cores minus one
   startup_timeout_seconds: 180
 
-tier: auto                 # auto | small | standard   (see config/models.yaml)
+tier: auto                 # auto | small | standard | large   (see config/models.yaml)
+                           # large (ShieldGemma 9B guardian) is opt-in; auto never selects it
 
 guardian:
   mode: combined           # combined = one classifier call for all categories (fast)

@@ -12,6 +12,7 @@ Every model shipped in the default manifest meets three conditions: a US-headqua
 | Assistant, standard tier | Gemma 4 12B | Google DeepMind (US) | Apache 2.0 | Dense model, takes LoRA style adapters cleanly, comfortable at Q4 on 32 GB or any GPU. |
 | Assistant, alternate | Olmo 3 7B | Allen Institute for AI (US) | Apache 2.0 | Published training corpus. Choose when data lineage matters more than raw quality. |
 | Guardian | ShieldGemma 2B | Google DeepMind (US) | Gemma Terms | Purpose-built safety classifier, fast enough for CPU, Yes/No output Palisade reads as a probability. |
+| Guardian, large tier (opt-in) | ShieldGemma 9B | Google DeepMind (US) | Gemma Terms | Same prompt format and Yes/No answer as the 2B with more capacity; more accurate and slower. Q8_0, about 9.9 GB. For machines with 40 GB or more and a GPU. |
 | Guardian, second opinion | Granite Guardian 3.3 8B | IBM (US) | Apache 2.0 | Stronger on prompt injection; used as an optional second classifier on the standard tier. |
 
 Why a dense assistant rather than a mixture-of-experts model: a LoRA adapter on an MoE spreads its updates across experts that only fire on some tokens, so a style or policy adapter lands inconsistently. Gemma 4 12B is dense, so an adapter applies to every forward pass. This matters if you later add a house-voice adapter; see `docs/FINE-TUNING.md`.

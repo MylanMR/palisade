@@ -35,6 +35,8 @@ This guide takes you from a download to a running system, explains the separate 
 
 Apple Silicon Macs qualify at 16 GB because the GPU shares the computer's memory. Palisade measures graphics memory only on NVIDIA cards, so a machine with an AMD or Intel card is placed by its system memory. To override the choice, set `tier: small` or `tier: standard` in Palisade's `settings.yaml`.
 
+**Stronger guardian (optional).** With 40 GB of memory or more and a GPU (any Apple Silicon Mac with that much memory qualifies), set `tier: large` to use ShieldGemma 9B as the guardian instead of the 2B. It is more accurate and adds a little time to each message. Palisade never picks this tier on its own, because it means a one-time download of about 10 GB. After changing the setting, run `palisade install` (source checkout) or `sudo palisade install` (service mode) to download and record it, then `palisade eval` to measure the difference.
+
 Apple Silicon Macs use the built-in GPU automatically. Windows and Linux machines with an NVIDIA, AMD, or Intel graphics card use it automatically through Vulkan. Machines without one run on the processor, which works but answers slowly (often 20 seconds or more).
 
 **Operating system.** macOS 13 or newer on Apple Silicon; Windows 10 or 11 (64-bit); or Linux with glibc 2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 36, RHEL 9, or later).
@@ -467,7 +469,7 @@ The llama-server hash is published per platform (for example, `macos-arm64`). In
 | `palisade run` | Start Palisade in the foreground. |
 | `palisade-mode service ACCOUNT`, `palisade-mode desktop`, `palisade-mode status` | Installed copies on macOS and Linux: switch or show the mode (Part 3). |
 | `bash scripts/bootstrap.sh` | Source checkout: set up, download, and start. Safe to rerun. |
-| `palisade eval` | Test the guardian against labeled examples and report its accuracy. |
+| `palisade eval` | Score labeled examples with the same checks chat uses and report accuracy. `--mode per_category` tries that guardian mode without changing settings. |
 | `palisade benchmark` | Score this installation against the NIST AI Risk Management Framework. |
 | `palisade harness show` | List the harness controls and the limits in effect. |
 | `palisade harness test` | Start the models and run the harness attack cases through the full request path. |

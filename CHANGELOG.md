@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2
+
+- **`palisade eval` measures what chat enforces.** It now scores with the same checks as chat (the guardian, the per-category recheck, and the override-phrasing rule) and reports the full path next to the guardian's first verdict alone, with what caught each case and the time per check. `--mode per_category` tries that guardian mode for one run without editing settings.
+- **ShieldGemma 9B guardian, opt-in `large` tier.** Same prompt format and answer tokens as the 2B with more capacity, at Q8_0 (about 9.9 GB). Set `tier: large` in `settings.yaml`; `auto` never selects it, so updating never starts the download on its own. Its published hash is filled in by `packaging/hf_hashes.py --write`.
+- The chat path and `eval` share one screening function, so the two cannot drift apart.
+- 2 new tests (140 total).
+
 ## 0.4.1
 
 Fixes from the first `palisade harness test` run against the real models (22 of 24 passed on 24 Oct 2026).

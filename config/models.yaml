@@ -65,6 +65,13 @@ tiers:
     base: gemma4-12b
     guardian: shieldgemma-2b
     secondary_guardian: granite-guardian-8b   # optional second classifier, see docs/COMPLIANCE.md
+  large:
+    # Opt in with `tier: large` in settings.yaml; `auto` never picks it, so an update never
+    # starts a 10 GB download on its own. Needs about 18 GB free for both models.
+    description: 40 GB RAM or more with a GPU (Apple Silicon, or 16 GB of VRAM); stronger guardian
+    min_ram_gb: 40
+    base: gemma4-12b
+    guardian: shieldgemma-9b
 
 models:
   # ---- Assistant (base) models ----
@@ -112,6 +119,19 @@ models:
     positive_token: "Yes"
     negative_token: "No"
     notes: Fast enough for CPU. Classifies one policy statement per call; Palisade can combine categories.
+
+  shieldgemma-9b:
+    role: guardian
+    lab: Google DeepMind (US)
+    license: Gemma Terms of Use
+    repo: mradermacher/shieldgemma-9b-GGUF
+    file: shieldgemma-9b.Q8_0.gguf
+    # No published hash yet: run packaging/hf_hashes.py --write where huggingface.co is reachable.
+    approx_gb: 9.9
+    adapter: yes_no
+    positive_token: "Yes"
+    negative_token: "No"
+    notes: Same family, prompt format, and answer tokens as the 2B, with more capacity. Q8_0 keeps the yes/no probabilities close to the full-precision model. Needs a GPU for comfortable speed.
 
   granite-guardian-8b:
     role: guardian

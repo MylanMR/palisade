@@ -4,7 +4,7 @@
   python -m palisade run
   python -m palisade doctor
   python -m palisade verify
-  python -m palisade eval [--cases eval/cases.jsonl]
+  python -m palisade eval [--cases eval/cases.jsonl] [--mode per_category] [--mode per_category]
   python -m palisade benchmark
   python -m palisade harness show | test [--no-model-cases]
   python -m palisade audit report [--decision D] [--include-content] [--out FILE]
@@ -333,9 +333,14 @@ def cmd_open(args):
 
 
 def cmd_eval(args):
-    """Run the guardian alone against labeled cases and report precision/recall."""
+    """Score labeled cases with the same checks chat uses: the guardian, the per-category
+    recheck, and the harness's override-phrasing rule. Reports the full path and the
+    guardian's first verdict alone, so the effect of each layer is visible.
+
+    --mode per_category tries that guardian mode for this run without editing settings."""
     from .policy import Policy
     from . import load_policy
+    from . import harness as H
 
     settings, manifest = load_settings(), load_models()
     host, tier = _tier(settings, manifest)
@@ -343,38 +348,67 @@ def cmd_eval(args):
     if problems:
         print("installation does not match manifest.lock; run `palisade doctor`")
         return 1
+    hcfg, _ = H.harness_config(settings)
     base, guard, guardian, t = _start_stack(settings, manifest, host, tier)
+    if args.mode:
+        guardian.mode = args.mode
     policy = Policy(load_policy())
     cases = [json.loads(l) for l in Path(args.cases).read_text(encoding="utf-8").splitlines() if l.strip()]
 
-    tp = fp = tn = fn = 0
-    rows = []
+    counts = {"full": [0, 0, 0, 0], "guardian_only": [0, 0, 0, 0]}   # tp fp tn fn
+
+    def tally(key, pred, truth):
+        i = 0 if pred and truth else 1 if pred else 3 if truth else 2
+        counts[key][i] += 1
+
+    rows, times = [], []
+    print(f"guardian mode: {guardian.mode}; threshold {guardian.threshold}; recheck from {hcfg['recheck_above']}")
+    print("caught = blocked or flagged for review\n")
     try:
         for c in cases:
-            v = guardian.check(c.get("stage", "input"), policy, c["prompt"], c.get("response", ""))
-            pred, truth = v.violated, bool(c["unsafe"])
-            if pred and truth: tp += 1
-            elif pred and not truth: fp += 1
-            elif not pred and truth: fn += 1
-            else: tn += 1
-            rows.append({"id": c.get("id"), "truth": truth, "pred": pred, "p": v.p_violation,
-                         "expected": c.get("category"), "attributed": v.categories})
-            print(f"{'OK ' if pred == truth else 'MISS'} {c.get('id','?'):24} p={v.p_violation:.3f} truth={truth}")
+            stage, prompt, response = c.get("stage", "input"), c["prompt"], c.get("response", "")
+            t0 = time.time()
+            vs = H.screen(guardian, policy, stage, prompt, response, hcfg["recheck_above"])
+            elapsed = time.time() - t0
+            times.append(elapsed)
+            rule = H.override_phrases(prompt) if stage == "input" else []
+            by_guardian = any(v.violated for v in vs)
+            pred, truth = by_guardian or bool(rule), bool(c["unsafe"])
+            tally("full", pred, truth)
+            tally("guardian_only", vs[0].violated, truth)
+            how = ("guardian" if vs[0].violated else "recheck" if by_guardian else "rule" if rule else "")
+            rows.append({"id": c.get("id"), "truth": truth, "pred": pred, "caught_by": how,
+                         "p": vs[0].p_violation, "p_recheck": vs[1].p_violation if len(vs) > 1 else None,
+                         "rule": rule, "expected": c.get("category"),
+                         "attributed": sorted({x for v in vs for x in v.categories}),
+                         "seconds": round(elapsed, 2)})
+            extra = f" recheck={vs[1].p_violation:.3f}" if len(vs) > 1 else ""
+            extra += f" rule={','.join(rule)}" if rule else ""
+            print(f"{'OK ' if pred == truth else 'MISS'} {c.get('id', '?'):24} p={vs[0].p_violation:.3f}{extra} "
+                  f"truth={truth}" + (f"  [{how}]" if how and truth else ""))
     finally:
         base.stop(); guard.stop()
 
-    prec = tp / (tp + fp) if tp + fp else 0.0
-    rec = tp / (tp + fn) if tp + fn else 0.0
-    out = {"cases": len(cases), "tp": tp, "fp": fp, "tn": tn, "fn": fn,
-           "precision": round(prec, 3), "recall": round(rec, 3),
-           "threshold": guardian.threshold, "mode": guardian.mode,
+    def metrics(k):
+        tp, fp, tn, fn = counts[k]
+        return {"tp": tp, "fp": fp, "tn": tn, "fn": fn,
+                "precision": round(tp / (tp + fp), 3) if tp + fp else 0.0,
+                "recall": round(tp / (tp + fn), 3) if tp + fn else 0.0}
+    full, gonly = metrics("full"), metrics("guardian_only")
+    avg = sum(times) / len(times) if times else 0.0
+    out = {"cases": len(cases), **full, "guardian_only": gonly,
+           "threshold": guardian.threshold, "mode": guardian.mode, "recheck_above": hcfg["recheck_above"],
+           "avg_seconds_per_check": round(avg, 2),
            "guardian": guardian.model_id, "policy_version": policy.version,
            "manifest_hash": manifest_hash(read_lock()), "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "rows": rows}
     dest = DATA_DIR / "eval" / f"eval-{int(time.time())}.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(out, indent=2), encoding="utf-8")
-    print(f"\nprecision={prec:.3f} recall={rec:.3f}  (tp={tp} fp={fp} tn={tn} fn={fn})")
+    print(f"\nfull path:      precision={full['precision']:.3f} recall={full['recall']:.3f}  "
+          f"(tp={full['tp']} fp={full['fp']} tn={full['tn']} fn={full['fn']})")
+    print(f"guardian alone: precision={gonly['precision']:.3f} recall={gonly['recall']:.3f}")
+    print(f"average {avg:.2f} s per check")
     print(f"report: {dest}")
     return 0
 
@@ -538,6 +572,8 @@ def main(argv=None):
     ip = sub.add_parser("import", help="reuse models and the audit chain from a source checkout's data folder")
     ip.add_argument("folder")
     e = sub.add_parser("eval"); e.add_argument("--cases", default=str(ROOT / "eval" / "cases.jsonl"))
+    e.add_argument("--mode", choices=["combined", "per_category"],
+                   help="try a guardian mode for this run only (settings.yaml is not changed)")
     sub.add_parser("benchmark")
     hp = sub.add_parser("harness", help="show the harness controls, or test them against the running models")
     hsub = hp.add_subparsers(dest="action", required=True)
